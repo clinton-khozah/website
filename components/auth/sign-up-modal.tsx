@@ -1,0 +1,511 @@
+"use client"
+
+import * as React from "react"
+import { motion, AnimatePresence } from "framer-motion"
+import { X } from "lucide-react"
+import Image from "next/image"
+import { supabase } from '@/lib/supabase'
+import { VerificationModal } from "./verification-modal"
+import { LoadingLogo } from "@/components/loading-logo"
+
+interface SignUpModalProps {
+  isOpen: boolean
+  onClose: () => void
+}
+
+export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
+  const [formData, setFormData] = React.useState({
+    email: "",
+    password: "",
+    confirmPassword: "",
+    fullName: "",
+    role: "" as string,
+    userType: "" as "student" | "mentor" | "tutor" | "user",
+  })
+  const [showVerification, setShowVerification] = React.useState(false)
+  const [error, setError] = React.useState("")
+  const [loading, setLoading] = React.useState(false)
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError("")
+    setLoading(true)
+
+    if (!formData.userType) {
+      setError("Please select a role")
+      setLoading(false)
+      return
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      setError("Passwords do not match")
+      setLoading(false)
+      return
+    }
+
+    try {
+      // Sign up with Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          data: {
+            full_name: formData.fullName,
+            user_type: formData.userType
+          }
+        }
+      })
+
+      if (authError) throw authError
+
+      if (!authData.user) {
+        throw new Error("Failed to create user account")
+      }
+
+      // Create user profile in the users_account table
+      const { error: profileError } = await supabase
+        .from('users_account')
+        .insert({
+          id: authData.user.id,
+          email: formData.email,
+          full_name: formData.fullName,
+          user_type: formData.userType,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          verified: false,
+          bio: null,
+          website: null,
+          social_links: {},
+          settings: {}
+        })
+
+      if (profileError) throw profileError
+
+      // If user is mentor or tutor, create mentor record
+      if (formData.userType === 'mentor' || formData.userType === 'tutor') {
+        const { error: mentorError } = await supabase
+          .from('mentors')
+          .insert({
+            id: authData.user.id,
+            name: formData.fullName,
+            email: formData.email,
+            title: '',
+            description: '',
+            specialization: '[]',
+            rating: 1.00,
+            total_reviews: 0,
+            hourly_rate: 0.00,
+            avatar: '',
+            experience: 0,
+            languages: '[]',
+            availability: 'Available now',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            phone_number: '',
+            gender: '',
+            age: null,
+            country: '',
+            latitude: null,
+            longitude: null,
+            sessions_conducted: 0,
+            qualifications: '',
+            id_document: '',
+            id_number: '',
+            cv_document: '',
+            payment_method: '',
+            linkedin_profile: '',
+            github_profile: '',
+            twitter_profile: '',
+            facebook_profile: '',
+            instagram_profile: '',
+            personal_website: '',
+            bank_name: '',
+            account_holder_name: '',
+            account_number: '',
+            routing_number: '',
+            payment_account_details: '{}',
+            payment_period: 'per_session',
+            is_complete: false,
+            is_verified: false
+          })
+
+        if (mentorError) {
+          console.error('Error creating mentor record:', mentorError)
+          // Don't throw error, user account is created, mentor record can be completed later
+        }
+      }
+
+      // Show verification modal
+      setShowVerification(true)
+    } catch (error: any) {
+      setError(error.message || "An error occurred during sign up")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleGoogleSignUp = async () => {
+    setError("")
+    setLoading(true)
+
+    if (!formData.userType) {
+      setError("Please select a role first")
+      setLoading(false)
+      return
+    }
+
+    try {
+      // Verify environment variables are loaded
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      if (!supabaseUrl) {
+        throw new Error('Supabase URL is not configured. Please check your .env.local file.')
+      }
+
+      console.log('Initiating Google OAuth sign-up...')
+      const redirectUrl = `${window.location.origin}/auth/callback?user_type=${formData.userType}&full_name=${encodeURIComponent(formData.fullName)}`
+      console.log('Redirect URL:', redirectUrl)
+
+      const { data, error: signUpError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+        }
+      })
+
+      if (signUpError) {
+        console.error('Google sign-up error:', signUpError)
+        throw signUpError
+      }
+
+      // Check if we got a URL to redirect to
+      if (data?.url) {
+        console.log('Redirecting to:', data.url)
+        window.location.href = data.url
+      } else {
+        throw new Error('No redirect URL received from Supabase')
+      }
+    } catch (error: any) {
+      console.error('Google sign-up error:', error)
+      setError(error.message || "An error occurred during Google sign up. Please make sure Google OAuth is enabled in your Supabase project.")
+      setLoading(false)
+    }
+  }
+
+  const handleVerificationComplete = () => {
+    setShowVerification(false)
+    onClose()
+  }
+
+  const handleSkipVerification = () => {
+    setShowVerification(false)
+    onClose()
+    // You can add additional logic here to show the login modal
+  }
+
+
+  return (
+    <>
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+          />
+          
+          {/* Modal */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            transition={{ duration: 0.2 }}
+            className="relative w-full max-w-xl mx-4 max-h-[90vh] overflow-y-auto"
+          >
+            <div className="bg-white border-2 border-blue-200 rounded-xl shadow-lg p-6">
+              {/* Logo */}
+              <div className="flex justify-center mb-6">
+                  {loading ? (
+                    <LoadingLogo size={44} />
+                  ) : (
+                    <Image
+                      src="/images/logo1.png"
+                      alt="Brightbyt Logo"
+                      width={50}
+                      height={50}
+                      className="object-contain"
+                    />
+                  )}
+              </div>
+
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-gray-900">Create Account</h2>
+                <button
+                  onClick={onClose}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">Full Name</label>
+                  <input
+                    type="text"
+                    value={formData.fullName}
+                    onChange={(e) =>
+                      setFormData({ ...formData, fullName: e.target.value })
+                    }
+                    className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Enter your full name"
+                    required
+                  />
+                </div>
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">I am joining as</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div
+                      className={`relative flex items-center p-2 rounded-lg border-2 cursor-pointer transition-all h-10 ${
+                          formData.userType === 'student'
+                            ? 'border-blue-600 bg-blue-50'
+                            : 'border-gray-300 bg-white hover:border-blue-400'
+                        }`}
+                        onClick={() => setFormData({ ...formData, userType: 'student' })}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <div
+                          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                              formData.userType === 'student' ? 'border-blue-600' : 'border-gray-300'
+                          }`}
+                        >
+                            {formData.userType === 'student' && (
+                              <div className="w-2 h-2 rounded-full bg-blue-600" />
+                          )}
+                        </div>
+                          <span className={`font-medium text-sm ${formData.userType === 'student' ? 'text-blue-600' : 'text-gray-700'}`}>
+                          Student
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      className={`relative flex items-center p-2 rounded-lg border-2 cursor-pointer transition-all h-10 ${
+                          formData.userType === 'mentor'
+                            ? 'border-blue-600 bg-blue-50'
+                            : 'border-gray-300 bg-white hover:border-blue-400'
+                        }`}
+                        onClick={() => setFormData({ ...formData, userType: 'mentor' })}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <div
+                          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                              formData.userType === 'mentor' ? 'border-blue-600' : 'border-gray-300'
+                          }`}
+                        >
+                            {formData.userType === 'mentor' && (
+                              <div className="w-2 h-2 rounded-full bg-blue-600" />
+                          )}
+                        </div>
+                          <span className={`font-medium text-sm ${formData.userType === 'mentor' ? 'text-blue-600' : 'text-gray-700'}`}>
+                          Mentor
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      className={`relative flex items-center p-2 rounded-lg border-2 cursor-pointer transition-all h-10 ${
+                          formData.userType === 'tutor'
+                            ? 'border-blue-600 bg-blue-50'
+                            : 'border-gray-300 bg-white hover:border-blue-400'
+                        }`}
+                        onClick={() => setFormData({ ...formData, userType: 'tutor' })}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <div
+                          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                              formData.userType === 'tutor' ? 'border-blue-600' : 'border-gray-300'
+                          }`}
+                        >
+                            {formData.userType === 'tutor' && (
+                              <div className="w-2 h-2 rounded-full bg-blue-600" />
+                          )}
+                          </div>
+                          <span className={`font-medium text-sm ${formData.userType === 'tutor' ? 'text-blue-600' : 'text-gray-700'}`}>
+                            Tutor
+                          </span>
+                        </div>
+                      </div>
+
+                      <div
+                        className={`relative flex items-center p-2 rounded-lg border-2 cursor-pointer transition-all h-10 ${
+                          formData.userType === 'user'
+                            ? 'border-blue-600 bg-blue-50'
+                            : 'border-gray-300 bg-white hover:border-blue-400'
+                        }`}
+                        onClick={() => setFormData({ ...formData, userType: 'user' })}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <div
+                            className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                              formData.userType === 'user' ? 'border-blue-600' : 'border-gray-300'
+                            }`}
+                          >
+                            {formData.userType === 'user' && (
+                              <div className="w-2 h-2 rounded-full bg-blue-600" />
+                            )}
+                          </div>
+                          <span className={`font-medium text-sm ${formData.userType === 'user' ? 'text-blue-600' : 'text-gray-700'}`}>
+                            Other
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label htmlFor="email" className="text-sm font-medium text-gray-700">
+                    Email
+                  </label>
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={handleInputChange}
+                    placeholder="Enter your email"
+                    required
+                    className="w-full px-4 py-2 bg-white border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label htmlFor="password" className="text-sm font-medium text-gray-700">
+                      Password
+                    </label>
+                    <input
+                      id="password"
+                      name="password"
+                      type="password"
+                      value={formData.password}
+                      onChange={handleInputChange}
+                      placeholder="Create password"
+                      required
+                      className="w-full px-4 py-2 bg-white border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="confirmPassword" className="text-sm font-medium text-gray-700">
+                      Confirm Password
+                    </label>
+                    <input
+                      id="confirmPassword"
+                      name="confirmPassword"
+                      type="password"
+                      value={formData.confirmPassword}
+                      onChange={handleInputChange}
+                      placeholder="Confirm password"
+                      required
+                      className="w-full px-4 py-2 bg-white border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                </div>
+
+                  {error && (
+                    <p className="text-sm text-red-500">{error}</p>
+                  )}
+
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="terms"
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    required
+                  />
+                  <label htmlFor="terms" className="text-sm text-gray-700">
+                    I agree to the{" "}
+                    <button type="button" className="text-blue-600 hover:text-blue-700">
+                      Terms of Service
+                    </button>
+                    {" "}and{" "}
+                    <button type="button" className="text-blue-600 hover:text-blue-700">
+                      Privacy Policy
+                    </button>
+                  </label>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
+                >
+                  {loading ? "Creating Account..." : "Create Account"}
+                </button>
+              </form>
+
+              <div className="mt-4">
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-gray-300"></div>
+                  </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="px-2 bg-white text-gray-500">Or continue with</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleGoogleSignUp}
+                  disabled={loading || !formData.userType}
+                  className="mt-4 w-full px-4 py-2 border-2 border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                  </svg>
+                  {loading ? "Signing up..." : "Sign up with Google"}
+                </button>
+              </div>
+
+              <div className="mt-6 text-center">
+                <p className="text-sm text-gray-600">
+                  Already have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    Sign in
+                  </button>
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+
+      <VerificationModal
+        isOpen={showVerification}
+        onClose={() => setShowVerification(false)}
+        email={formData.email}
+        onVerificationComplete={handleVerificationComplete}
+        onSkip={handleSkipVerification}
+      />
+    </>
+  )
+} 

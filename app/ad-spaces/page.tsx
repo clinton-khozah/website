@@ -1,0 +1,616 @@
+"use client"
+
+import { useState, useEffect, useRef } from "react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
+import { MapPin, Video, Users, Star, Heart, MessageSquare, Calendar, Clock, Globe, CheckCircle, Filter, X } from "lucide-react"
+import { Navbar } from "@/components/navbar"
+import { Footer } from "@/components/footer"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { PageContainer } from "@/components/page-container"
+import { AnimatePresence, motion } from "framer-motion"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+
+// Tutor/Mentor interface
+interface Tutor {
+  id: number
+  name: string
+  avatar: string
+  verified: boolean
+  rating: number
+  reviews: number
+  subjects: string[]
+  location: {
+    city: string
+    country: string
+    coordinates: { lat: number; lng: number }
+  }
+  distance?: number // in km
+  sessionTypes: ("contact" | "online")[]
+  price: {
+    contact: number
+    online: number
+    currency: string
+  }
+  availability: string
+  description: string
+  experience: string
+  languages: string[]
+}
+
+// Sample tutor data
+const tutors: Tutor[] = [
+  {
+    id: 1,
+    name: "Sarah Johnson",
+    avatar: "https://randomuser.me/api/portraits/women/44.jpg",
+      verified: true,
+    rating: 4.9,
+    reviews: 87,
+    subjects: ["Mathematics", "Physics", "Calculus"],
+    location: {
+      city: "Cape Town",
+      country: "South Africa",
+      coordinates: { lat: -33.9249, lng: 18.4241 }
+    },
+    distance: 2.5,
+    sessionTypes: ["contact", "online"],
+    price: {
+      contact: 350,
+      online: 250,
+      currency: "R"
+    },
+    availability: "Available now",
+    description: "Expert mathematics tutor with 10+ years of experience. Specialized in advanced calculus and physics.",
+    experience: "10+ years",
+    languages: ["English", "Afrikaans"]
+  },
+  {
+    id: 2,
+    name: "Michael Chen",
+    avatar: "https://randomuser.me/api/portraits/men/32.jpg",
+      verified: true,
+    rating: 4.8,
+    reviews: 65,
+    subjects: ["Programming", "Web Development", "Data Science"],
+    location: {
+      city: "Johannesburg",
+      country: "South Africa",
+      coordinates: { lat: -26.2041, lng: 28.0473 }
+    },
+    distance: 5.2,
+    sessionTypes: ["online"],
+    price: {
+      contact: 0,
+      online: 300,
+      currency: "R"
+    },
+    availability: "Available in 2 hours",
+    description: "Professional software developer and coding instructor. Expert in Python, JavaScript, and machine learning.",
+    experience: "8+ years",
+    languages: ["English", "Mandarin"]
+  },
+  {
+    id: 3,
+    name: "Emma Wilson",
+    avatar: "https://randomuser.me/api/portraits/women/68.jpg",
+      verified: true,
+    rating: 4.7,
+    reviews: 92,
+    subjects: ["English", "Literature", "Writing"],
+    location: {
+      city: "Durban",
+      country: "South Africa",
+      coordinates: { lat: -29.8587, lng: 31.0218 }
+    },
+    distance: 8.1,
+    sessionTypes: ["contact", "online"],
+    price: {
+      contact: 280,
+      online: 200,
+      currency: "R"
+    },
+    availability: "Available now",
+    description: "Experienced English tutor specializing in literature analysis and creative writing. Helps students excel in exams.",
+    experience: "12+ years",
+    languages: ["English"]
+  },
+  {
+    id: 4,
+    name: "David Kim",
+    avatar: "https://randomuser.me/api/portraits/men/85.jpg",
+      verified: true,
+    rating: 4.9,
+    reviews: 156,
+    subjects: ["Chemistry", "Biology", "Medicine"],
+    location: {
+      city: "Pretoria",
+      country: "South Africa",
+      coordinates: { lat: -25.7479, lng: 28.2293 }
+    },
+    distance: 12.3,
+    sessionTypes: ["contact"],
+    price: {
+      contact: 400,
+      online: 0,
+      currency: "R"
+    },
+    availability: "Available tomorrow",
+    description: "Medical professional and science tutor. Expert in chemistry and biology with focus on exam preparation.",
+    experience: "15+ years",
+    languages: ["English", "Zulu"]
+  },
+  {
+    id: 5,
+    name: "Lisa Anderson",
+    avatar: "https://randomuser.me/api/portraits/women/25.jpg",
+      verified: true,
+    rating: 4.8,
+    reviews: 78,
+    subjects: ["Business", "Economics", "Finance"],
+    location: {
+      city: "Cape Town",
+      country: "South Africa",
+      coordinates: { lat: -33.9249, lng: 18.4241 }
+    },
+    distance: 1.8,
+    sessionTypes: ["contact", "online"],
+    price: {
+      contact: 320,
+      online: 220,
+      currency: "R"
+    },
+    availability: "Available now",
+    description: "Business consultant and economics tutor. Helps students understand complex business concepts and excel in exams.",
+    experience: "9+ years",
+    languages: ["English"]
+  },
+  {
+    id: 6,
+    name: "James Brown",
+    avatar: "https://randomuser.me/api/portraits/men/41.jpg",
+    verified: true,
+    rating: 4.6,
+    reviews: 45,
+    subjects: ["Music", "Piano", "Music Theory"],
+    location: {
+      city: "Port Elizabeth",
+      country: "South Africa",
+      coordinates: { lat: -33.9608, lng: 25.6022 }
+    },
+    distance: 25.5,
+    sessionTypes: ["contact", "online"],
+    price: {
+      contact: 380,
+      online: 280,
+      currency: "R"
+    },
+    availability: "Available in 3 hours",
+    description: "Professional musician and music teacher. Specialized in piano and music theory for all levels.",
+    experience: "7+ years",
+    languages: ["English", "Xhosa"]
+  }
+]
+
+export default function FindTutorsPage() {
+  const [search, setSearch] = useState("")
+  const [sessionType, setSessionType] = useState<"all" | "contact" | "online">("all")
+  const [sortBy, setSortBy] = useState<"distance" | "rating" | "price">("distance")
+  const [showFilters, setShowFilters] = useState(false)
+  const [selectedTutor, setSelectedTutor] = useState<Tutor | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const cardsPerPage = 3
+
+  // Get user location (simulated - in real app, use geolocation API)
+  useEffect(() => {
+    // Simulate user location (Cape Town center)
+    setUserLocation({ lat: -33.9249, lng: 18.4241 })
+  }, [])
+
+  // Calculate distance for tutors
+  const calculateDistance = (tutor: Tutor): number => {
+    if (!userLocation) return 0
+    const R = 6371 // Earth's radius in km
+    const dLat = (tutor.location.coordinates.lat - userLocation.lat) * Math.PI / 180
+    const dLon = (tutor.location.coordinates.lng - userLocation.lng) * Math.PI / 180
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(userLocation.lat * Math.PI / 180) * Math.cos(tutor.location.coordinates.lat * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c
+  }
+
+  // Filter and sort tutors
+  const filteredTutors = tutors
+    .map(tutor => ({
+      ...tutor,
+      distance: calculateDistance(tutor)
+    }))
+    .filter(tutor => {
+      const matchesSearch = 
+        tutor.name.toLowerCase().includes(search.toLowerCase()) ||
+        tutor.subjects.some(subject => subject.toLowerCase().includes(search.toLowerCase())) ||
+        tutor.location.city.toLowerCase().includes(search.toLowerCase())
+      
+      const matchesSessionType = 
+        sessionType === "all" || tutor.sessionTypes.includes(sessionType)
+      
+      return matchesSearch && matchesSessionType
+    })
+    .sort((a, b) => {
+      if (sortBy === "distance") return a.distance! - b.distance!
+      if (sortBy === "rating") return b.rating - a.rating
+      if (sortBy === "price") {
+        const priceA = sessionType === "contact" ? a.price.contact : a.price.online
+        const priceB = sessionType === "contact" ? b.price.contact : b.price.online
+        return priceA - priceB
+      }
+      return 0
+    })
+
+  const totalPages = Math.ceil(filteredTutors.length / cardsPerPage)
+  const paginatedTutors = filteredTutors.slice((currentPage - 1) * cardsPerPage, currentPage * cardsPerPage)
+
+  const handleViewDetails = (tutor: Tutor) => {
+    setSelectedTutor(tutor)
+    setIsModalOpen(true)
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col relative">
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          width: "100vw",
+          height: "100vh",
+          backgroundImage: "url('/images/adspace.jpg')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          zIndex: 0,
+        }}
+        aria-hidden="true"
+      />
+      <Navbar />
+      <main className="flex-1 relative z-10">
+        <div className="container py-12 max-w-7xl mx-auto px-4">
+          <div className="text-center py-5 mb-8 mt-16">
+            <h1 className="text-5xl md:text-6xl font-bold text-white mb-6">
+              Find Tutors
+            </h1>
+            <p className="text-xl text-gray-300 mb-8">
+              Search for nearby tutors or online mentors for contact and online sessions
+            </p>
+            
+            {/* Search and Filters */}
+            <div className="max-w-4xl mx-auto space-y-4">
+              <div className="flex gap-4">
+                <Input
+                  type="text"
+                  placeholder="Search by name, subject, or location..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="flex-1 bg-white/90 text-gray-900 border-blue-200"
+                />
+                <Button
+                  onClick={() => setShowFilters(!showFilters)}
+                  variant="outline"
+                  className="bg-white/90 border-blue-200 text-gray-900"
+                >
+                  <Filter className="h-4 w-4 mr-2" />
+                  Filters
+                </Button>
+              </div>
+
+              {/* Filter Panel */}
+              <AnimatePresence>
+                {showFilters && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="bg-white/90 rounded-lg p-4 border border-blue-200"
+                  >
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium text-gray-700 mb-2 block">Session Type</label>
+                        <Select value={sessionType} onValueChange={(value: any) => setSessionType(value)}>
+                          <SelectTrigger className="bg-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Sessions</SelectItem>
+                            <SelectItem value="contact">Contact Sessions</SelectItem>
+                            <SelectItem value="online">Online Sessions</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-gray-700 mb-2 block">Sort By</label>
+                        <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
+                          <SelectTrigger className="bg-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="distance">Distance (Nearest)</SelectItem>
+                            <SelectItem value="rating">Highest Rating</SelectItem>
+                            <SelectItem value="price">Lowest Price</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          {/* Tutors Grid */}
+          <div className="flex flex-wrap justify-center gap-8">
+            {paginatedTutors.length === 0 ? (
+              <div className="text-center text-white py-20">
+                <p className="text-2xl font-bold">No tutors found. Try a different search!</p>
+              </div>
+                ) : (
+              paginatedTutors.map((tutor) => (
+                  <motion.div
+                  key={tutor.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5 }}
+                  className="w-80 bg-white rounded-2xl border-2 border-blue-200 shadow-xl p-6 flex flex-col"
+                >
+                  {/* Header */}
+                  <div className="flex items-center gap-3 mb-4">
+                    <Avatar className="h-14 w-14">
+                      <AvatarImage src={tutor.avatar} alt={tutor.name} />
+                      <AvatarFallback>{tutor.name.charAt(0)}</AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                        <span className="font-semibold text-gray-900">{tutor.name}</span>
+                        {tutor.verified && (
+                          <CheckCircle className="h-4 w-4 text-blue-600" />
+                              )}
+                            </div>
+                      <div className="flex items-center gap-1 mt-1">
+                        <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                        <span className="text-xs text-gray-600">{tutor.rating} ({tutor.reviews} reviews)</span>
+                      </div>
+                          </div>
+                        </div>
+
+                  {/* Location & Distance */}
+                  <div className="flex items-center gap-2 mb-3 text-sm text-gray-700">
+                    <MapPin className="h-4 w-4 text-blue-600" />
+                    <span>{tutor.location.city}, {tutor.location.country}</span>
+                    {tutor.distance && (
+                      <span className="text-blue-600 font-medium">• {tutor.distance.toFixed(1)} km away</span>
+                    )}
+                        </div>
+
+                  {/* Subjects */}
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {tutor.subjects.slice(0, 3).map((subject, idx) => (
+                      <Badge key={idx} variant="secondary" className="bg-blue-100 text-blue-700 border border-blue-200">
+                        {subject}
+                      </Badge>
+                          ))}
+                        </div>
+
+                  {/* Session Types */}
+                  <div className="flex gap-2 mb-3">
+                    {tutor.sessionTypes.includes("contact") && (
+                      <Badge className="bg-green-100 text-green-700 border border-green-200">
+                        <Users className="h-3 w-3 mr-1" />
+                        Contact
+                      </Badge>
+                    )}
+                    {tutor.sessionTypes.includes("online") && (
+                      <Badge className="bg-purple-100 text-purple-700 border border-purple-200">
+                        <Video className="h-3 w-3 mr-1" />
+                        Online
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Pricing */}
+                  <div className="bg-blue-50 rounded-lg p-3 mb-3 border border-blue-100">
+                    <div className="text-xs text-gray-600 mb-1">Starting from</div>
+                    <div className="text-xl font-bold text-gray-900">
+                      {tutor.currency}
+                      {sessionType === "contact" && tutor.price.contact > 0
+                        ? tutor.price.contact
+                        : sessionType === "online" && tutor.price.online > 0
+                        ? tutor.price.online
+                        : tutor.price.contact > 0
+                        ? tutor.price.contact
+                        : tutor.price.online}
+                      <span className="text-sm font-normal text-gray-600">/session</span>
+                    </div>
+                        </div>
+
+                  {/* Availability */}
+                  <div className="flex items-center gap-2 mb-4 text-sm text-gray-700">
+                    <Clock className="h-4 w-4 text-green-600" />
+                    <span>{tutor.availability}</span>
+                        </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2 mt-auto">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="hover:bg-red-50 text-gray-500 hover:text-red-500"
+                    >
+                      <Heart className="h-5 w-5" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="hover:bg-blue-50 text-gray-500 hover:text-blue-500"
+                    >
+                      <MessageSquare className="h-5 w-5" />
+                    </Button>
+                    <Button
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                      onClick={() => handleViewDetails(tutor)}
+                    >
+                      View Details
+                    </Button>
+                      </div>
+                  </motion.div>
+              ))
+            )}
+                  </div>
+
+          {/* Pagination */}
+            {totalPages > 1 && (
+            <div className="flex justify-center items-center gap-2 mt-12">
+                <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                className="px-4 py-2 rounded bg-blue-600 text-white disabled:opacity-50 hover:bg-blue-700 transition font-medium"
+                >
+                  Prev
+                </button>
+              <span className="text-white font-semibold px-4">Page {currentPage} of {totalPages}</span>
+                <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                className="px-4 py-2 rounded bg-blue-600 text-white disabled:opacity-50 hover:bg-blue-700 transition font-medium"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+        </div>
+      </main>
+
+      {/* Tutor Details Modal */}
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="w-full max-w-2xl bg-white">
+          {selectedTutor && (
+            <>
+              <DialogHeader>
+                <div className="flex items-center gap-4">
+                  <Avatar className="h-16 w-16">
+                    <AvatarImage src={selectedTutor.avatar} alt={selectedTutor.name} />
+                    <AvatarFallback>{selectedTutor.name.charAt(0)}</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <DialogTitle className="text-2xl flex items-center gap-2">
+                      {selectedTutor.name}
+                      {selectedTutor.verified && (
+                        <CheckCircle className="h-5 w-5 text-blue-600" />
+                      )}
+                    </DialogTitle>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                      <span className="text-sm text-gray-600">{selectedTutor.rating} ({selectedTutor.reviews} reviews)</span>
+                    </div>
+                  </div>
+                </div>
+              </DialogHeader>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4">
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-2">Location</h3>
+                    <div className="flex items-center gap-2 text-gray-700">
+                      <MapPin className="h-4 w-4 text-blue-600" />
+                      <span>{selectedTutor.location.city}, {selectedTutor.location.country}</span>
+                      {selectedTutor.distance && (
+                        <span className="text-blue-600">• {selectedTutor.distance.toFixed(1)} km away</span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-2">Subjects</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTutor.subjects.map((subject, idx) => (
+                        <Badge key={idx} variant="secondary" className="bg-blue-100 text-blue-700">
+                          {subject}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-2">Session Types</h3>
+                    <div className="flex gap-2">
+                      {selectedTutor.sessionTypes.includes("contact") && (
+                        <Badge className="bg-green-100 text-green-700">
+                          <Users className="h-3 w-3 mr-1" />
+                          Contact Sessions: {selectedTutor.currency}{selectedTutor.price.contact}/session
+                        </Badge>
+                      )}
+                      {selectedTutor.sessionTypes.includes("online") && (
+                        <Badge className="bg-purple-100 text-purple-700">
+                          <Video className="h-3 w-3 mr-1" />
+                          Online Sessions: {selectedTutor.currency}{selectedTutor.price.online}/session
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-2">About</h3>
+                    <p className="text-gray-700 text-sm">{selectedTutor.description}</p>
+                      </div>
+
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-2">Experience</h3>
+                    <p className="text-gray-700">{selectedTutor.experience}</p>
+                  </div>
+
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-2">Languages</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTutor.languages.map((lang, idx) => (
+                        <Badge key={idx} variant="outline">{lang}</Badge>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-2">Availability</h3>
+                    <div className="flex items-center gap-2 text-gray-700">
+                      <Clock className="h-4 w-4 text-green-600" />
+                      <span>{selectedTutor.availability}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setIsModalOpen(false)}
+                >
+                  Close
+                </Button>
+                <Button className="bg-blue-600 hover:bg-blue-700 text-white">
+                  <Calendar className="h-4 w-4 mr-2" />
+                  Book Session
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <div className="relative z-10">
+        <Footer />
+      </div>
+    </div>
+  )
+}
