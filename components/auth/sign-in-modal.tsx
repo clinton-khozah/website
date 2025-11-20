@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { X } from "lucide-react"
 import Image from "next/image"
 import { supabase } from '@/lib/supabase'
+import { googleAuthService } from '@/lib/googleAuthService'
 import { useRouter } from 'next/navigation'
 import { LoadingLogo } from "@/components/loading-logo"
 
@@ -35,19 +36,41 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
 
       if (authError) throw authError
 
-      // Get user type from users_account table
-      const { data: userData, error: userError } = await supabase
-        .from('users_account')
-        .select('user_type')
+      // First check if user is a mentor
+      const { data: mentorData, error: mentorError } = await supabase
+        .from('mentors')
+        .select('id, email')
         .eq('id', authData.user?.id)
         .single()
 
-      if (userError) throw userError
+      // If user is a mentor, redirect to tutor dashboard
+      if (!mentorError && mentorData) {
+        console.log('User is a mentor, redirecting to tutor dashboard')
+        router.push('/dashboard/tutor')
+        setTimeout(() => {
+          onClose()
+        }, 100)
+        return
+      }
 
-      // Redirect based on user type
-      await redirectBasedOnUserType(userData.user_type, authData.user?.id)
+      // Check if user exists in students table
+      const { data: studentData, error: studentError } = await supabase
+        .from('students')
+        .select('id')
+        .eq('id', authData.user?.id)
+        .single()
 
-      onClose()
+      if (studentError && !studentData) {
+        console.warn('User not found in mentors or students table, defaulting to student')
+      }
+
+      // Redirect to student dashboard
+      await redirectBasedOnUserType('student', authData.user?.id)
+
+      // Wait a bit before closing to ensure redirect happens
+      setTimeout(() => {
+        onClose()
+      }, 100)
     } catch (error: any) {
       setError(error.message || "An error occurred during sign in")
     } finally {
@@ -60,37 +83,75 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
     setLoading(true)
 
     try {
-      // Verify environment variables are loaded
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-      if (!supabaseUrl) {
-        throw new Error('Supabase URL is not configured. Please check your .env.local file.')
+      console.log("Starting Google authentication...")
+
+      // Get Google credential using the same method as BrightByt dashboard
+      const credential = await googleAuthService.signInWithGoogle(false)
+      console.log("Google credential received:", credential ? "Yes" : "No")
+
+      if (!credential) {
+        throw new Error("No credential received from Google")
       }
 
-      console.log('Initiating Google OAuth sign-in...')
-      console.log('Redirect URL:', `${window.location.origin}/auth/callback`)
-
-      const { data, error: signInError } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
-        }
+      // Use Supabase to authenticate with Google token (same as BrightByt dashboard)
+      console.log("Signing in with Google via Supabase...")
+      const { data, error: signInError } = await supabase.auth.signInWithIdToken({
+        provider: "google",
+        token: credential,
       })
 
       if (signInError) {
-        console.error('Google sign-in error:', signInError)
-        throw signInError
+        console.error("Supabase Google sign-in error:", signInError)
+        throw new Error(`Supabase authentication failed: ${signInError.message}`)
       }
 
-      // Check if we got a URL to redirect to
-      if (data?.url) {
-        console.log('Redirecting to:', data.url)
-        window.location.href = data.url
-      } else {
-        throw new Error('No redirect URL received from Supabase')
+      if (!data.user) {
+        throw new Error("No user data received from Supabase")
       }
+
+      console.log("Supabase Google authentication successful:", data.user)
+
+      // Check if user exists in mentors or students table
+      const { data: mentorData, error: mentorError } = await supabase
+        .from('mentors')
+        .select('id')
+        .eq('id', data.user.id)
+        .single()
+
+      // If not found in mentors, check students table
+      // First check if user is a mentor
+      if (!mentorError && mentorData) {
+        console.log('User is a mentor, redirecting to tutor dashboard')
+        router.push('/dashboard/tutor')
+        setTimeout(() => {
+          onClose()
+        }, 100)
+        return
+      }
+
+      // Check if user exists in students table
+      const { data: studentData, error: studentError } = await supabase
+        .from('students')
+        .select('id')
+        .eq('id', data.user.id)
+        .single()
+
+      if (studentError && !studentData) {
+        console.warn('User not found in mentors or students table, defaulting to student')
+      }
+
+      console.log('Redirecting user to student dashboard')
+
+      // Redirect to student dashboard
+      await redirectBasedOnUserType('student', data.user.id)
+
+      // Wait a bit before closing to ensure redirect happens
+      setTimeout(() => {
+        onClose()
+      }, 100)
     } catch (error: any) {
       console.error('Google sign-in error:', error)
-      setError(error.message || "An error occurred during Google sign in. Please make sure Google OAuth is enabled in your Supabase project.")
+      setError(error.message || "An error occurred during Google sign in.")
       setLoading(false)
     }
   }
@@ -99,6 +160,7 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
     // Map old user types to new ones
     const userTypeMap: { [key: string]: string } = {
       'student': 'student',
+      'learner': 'student',
       'mentor': 'mentor',
       'tutor': 'mentor', // tutor and mentor are the same
       'user': 'student',
@@ -108,12 +170,17 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
       'affiliate': 'mentor' // fallback
     }
 
-    const mappedType = userTypeMap[userType] || 'student'
+    const mappedType = userTypeMap[userType.toLowerCase()] || 'student'
 
+    console.log('Redirecting user - Type:', userType, 'Mapped:', mappedType)
+
+    // Use window.location for a hard redirect to ensure it happens
     if (mappedType === 'mentor' || mappedType === 'tutor') {
-      router.push('/dashboard/tutor')
+      console.log('Redirecting to tutor dashboard')
+      window.location.href = '/dashboard/tutor'
     } else {
-      router.push('/dashboard/learner')
+      console.log('Redirecting to learner dashboard')
+      window.location.href = '/dashboard/learner'
     }
   }
 

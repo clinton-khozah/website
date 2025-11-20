@@ -4,7 +4,7 @@ import * as React from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { X } from "lucide-react"
 import { AnimatedButton } from "@/components/animated-button"
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from "@/lib/supabase"
 
 interface VerificationModalProps {
   isOpen: boolean
@@ -21,11 +21,6 @@ export function VerificationModal({ isOpen, onClose, email, onVerificationComple
   const [resendDisabled, setResendDisabled] = React.useState(false)
   const [countdown, setCountdown] = React.useState(60)
   const [showSuccess, setShowSuccess] = React.useState(false)
-
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
 
   React.useEffect(() => {
     if (resendDisabled && countdown > 0) {

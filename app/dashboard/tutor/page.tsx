@@ -1,6 +1,6 @@
 "use client"
 
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { DashboardLayout } from '@/components/dashboard/layout'
@@ -11,11 +11,6 @@ export default function TutorDashboard() {
   const [loading, setLoading] = useState(true)
   const router = useRouter()
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-
   useEffect(() => {
     const fetchUserData = async () => {
       try {
@@ -25,24 +20,27 @@ export default function TutorDashboard() {
           return
         }
 
-        const { data: userAccount, error: userError } = await supabase
-          .from('users_account')
-          .select('*')
-          .eq('id', user.id)
-          .single()
-
-        if (userError) throw userError
-        setUserData(userAccount)
-
-        // Fetch mentor data if exists
+        // Fetch mentor data
         const { data: mentor, error: mentorError } = await supabase
           .from('mentors')
           .select('*')
           .eq('id', user.id)
           .single()
 
-        if (!mentorError && mentor) {
+        if (mentorError) {
+          // If not a mentor, check if they're a student
+          const { data: studentData, error: studentError } = await supabase
+            .from('students')
+            .select('*')
+            .eq('id', user.id)
+            .single()
+
+          if (studentError) throw mentorError
+          setUserData(studentData)
+        } else {
           setMentorData(mentor)
+          // Use mentor data as user data for tutors
+          setUserData({ ...mentor, full_name: mentor.name, user_type: 'mentor' })
         }
       } catch (error) {
         console.error('Error fetching user data:', error)

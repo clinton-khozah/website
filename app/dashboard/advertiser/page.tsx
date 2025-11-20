@@ -14,7 +14,7 @@ import {
 } from "lucide-react"
 import { AnimatedButton } from "@/components/animated-button"
 import { DashboardLayout } from "@/components/dashboard/layout"
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
 const stats = [
@@ -122,11 +122,6 @@ export default function AdvertiserDashboard() {
   const [loading, setLoading] = React.useState(true)
   const router = useRouter()
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-
   React.useEffect(() => {
     const fetchUserData = async () => {
       try {
@@ -136,14 +131,26 @@ export default function AdvertiserDashboard() {
           return
         }
 
-        const { data, error } = await supabase
-          .from('users_account')
+        // Check if user is in mentors or students table
+        const { data: mentorData, error: mentorError } = await supabase
+          .from('mentors')
           .select('*')
           .eq('id', user.id)
           .single()
 
-        if (error) throw error
-        setUserData(data)
+        if (!mentorError && mentorData) {
+          setUserData({ ...mentorData, full_name: mentorData.name, user_type: 'mentor' })
+        } else {
+          // Check students table
+          const { data: studentData, error: studentError } = await supabase
+            .from('students')
+            .select('*')
+            .eq('id', user.id)
+            .single()
+
+          if (studentError) throw studentError
+          setUserData({ ...studentData, user_type: 'student' })
+        }
       } catch (error) {
         console.error('Error fetching user data:', error)
       } finally {

@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from "framer-motion"
 import { X } from "lucide-react"
 import Image from "next/image"
 import { supabase } from '@/lib/supabase'
+import { googleAuthService } from '@/lib/googleAuthService'
+import { useRouter } from 'next/navigation'
 import { VerificationModal } from "./verification-modal"
 import { LoadingLogo } from "@/components/loading-logo"
 
@@ -14,6 +16,7 @@ interface SignUpModalProps {
 }
 
 export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
+  const router = useRouter()
   const [formData, setFormData] = React.useState({
     email: "",
     password: "",
@@ -71,27 +74,11 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
         throw new Error("Failed to create user account")
       }
 
-      // Create user profile in the users_account table
-      const { error: profileError } = await supabase
-        .from('users_account')
-        .insert({
-          id: authData.user.id,
-          email: formData.email,
-          full_name: formData.fullName,
-          user_type: formData.userType,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          verified: false,
-          bio: null,
-          website: null,
-          social_links: {},
-          settings: {}
-        })
-
-      if (profileError) throw profileError
-
-      // If user is mentor or tutor, create mentor record
-      if (formData.userType === 'mentor' || formData.userType === 'tutor') {
+      // Determine which table to use based on user type
+      const isMentor = formData.userType === 'mentor' || formData.userType === 'tutor'
+      
+      if (isMentor) {
+        // Create mentor record
         const { error: mentorError } = await supabase
           .from('mentors')
           .insert({
@@ -154,48 +141,165 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
   }
 
   const handleGoogleSignUp = async () => {
-    setError("")
-    setLoading(true)
-
     if (!formData.userType) {
       setError("Please select a role first")
       setLoading(false)
       return
     }
 
+    setError("")
+    setLoading(true)
+
     try {
-      // Verify environment variables are loaded
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-      if (!supabaseUrl) {
-        throw new Error('Supabase URL is not configured. Please check your .env.local file.')
+      console.log("Starting Google authentication for sign-up...")
+
+      // Get Google credential using the same method as BrightByt dashboard
+      const credential = await googleAuthService.signInWithGoogle(true)
+      console.log("Google credential received:", credential ? "Yes" : "No")
+
+      if (!credential) {
+        throw new Error("No credential received from Google")
       }
 
-      console.log('Initiating Google OAuth sign-up...')
-      const redirectUrl = `${window.location.origin}/auth/callback?user_type=${formData.userType}&full_name=${encodeURIComponent(formData.fullName)}`
-      console.log('Redirect URL:', redirectUrl)
-
-      const { data, error: signUpError } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: redirectUrl,
-        }
+      // Use Supabase to authenticate with Google token (same as BrightByt dashboard)
+      console.log("Signing up with Google via Supabase...")
+      const { data, error: signUpError } = await supabase.auth.signInWithIdToken({
+        provider: "google",
+        token: credential,
       })
 
       if (signUpError) {
-        console.error('Google sign-up error:', signUpError)
-        throw signUpError
+        console.error("Supabase Google sign-up error:", signUpError)
+        throw new Error(`Supabase authentication failed: ${signUpError.message}`)
       }
 
-      // Check if we got a URL to redirect to
-      if (data?.url) {
-        console.log('Redirecting to:', data.url)
-        window.location.href = data.url
-      } else {
-        throw new Error('No redirect URL received from Supabase')
+      if (!data.user) {
+        throw new Error("No user data received from Supabase")
       }
+
+      console.log("Supabase Google authentication successful:", data.user)
+
+      // Determine which table to use based on user type
+      const isMentor = formData.userType === 'mentor' || formData.userType === 'tutor'
+      const tableName = isMentor ? 'mentors' : 'students'
+
+      // Check if user already exists
+      const { data: existingUser } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('id', data.user.id)
+        .single()
+
+      if (!existingUser) {
+        const nameToUse = formData.fullName || data.user.user_metadata?.full_name || data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User'
+
+        if (isMentor) {
+          // Create mentor record
+          const { error: mentorError } = await supabase
+            .from('mentors')
+            .insert({
+              id: data.user.id,
+              name: nameToUse,
+              email: data.user.email || '',
+              title: '',
+              description: '',
+              specialization: '[]',
+              rating: 1.00,
+              total_reviews: 0,
+              hourly_rate: 0.00,
+              avatar: data.user.user_metadata?.avatar_url || '',
+              experience: 0,
+              languages: '[]',
+              availability: 'Available now',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              phone_number: '',
+              gender: '',
+              age: null,
+              country: '',
+              latitude: null,
+              longitude: null,
+              sessions_conducted: 0,
+              qualifications: '',
+              id_document: '',
+              id_number: '',
+              cv_document: '',
+              payment_method: '',
+              linkedin_profile: '',
+              github_profile: '',
+              twitter_profile: '',
+              facebook_profile: '',
+              instagram_profile: '',
+              personal_website: '',
+              bank_name: '',
+              account_holder_name: '',
+              account_number: '',
+              routing_number: '',
+              payment_account_details: '{}',
+              payment_period: 'per_session',
+              is_complete: false,
+              is_verified: false
+            })
+
+          if (mentorError) {
+            console.error('Error creating mentor record:', mentorError)
+          }
+        } else {
+          // Create student record
+          const { error: studentError } = await supabase
+            .from('students')
+            .insert({
+              id: data.user.id,
+              email: data.user.email || '',
+              full_name: nameToUse,
+              avatar_url: data.user.user_metadata?.avatar_url || null,
+              bio: null,
+              website: null,
+              phone_number: null,
+              date_of_birth: null,
+              gender: null,
+              country: null,
+              city: null,
+              timezone: null,
+              native_language: null,
+              languages_spoken: '[]',
+              current_level: 'beginner',
+              interests: '[]',
+              learning_goals: null,
+              preferred_learning_style: null,
+              availability_hours: null,
+              budget_range: null,
+              social_links: '{}',
+              settings: '{}',
+              verified: data.user.email_confirmed_at ? true : false,
+              status: 'active',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+
+          if (studentError) {
+            console.error('Error creating student record:', studentError)
+          }
+        }
+      }
+
+      const userTypeForRedirect = formData.userType
+
+      console.log('Sign-up complete - User type:', userTypeForRedirect)
+
+      // Redirect based on user type
+      if (userTypeForRedirect === 'mentor' || userTypeForRedirect === 'tutor') {
+        console.log('Redirecting to tutor dashboard')
+        router.push('/dashboard/tutor')
+      } else {
+        console.log('Redirecting to learner dashboard')
+        router.push('/dashboard/learner')
+      }
+
+      onClose()
     } catch (error: any) {
       console.error('Google sign-up error:', error)
-      setError(error.message || "An error occurred during Google sign up. Please make sure Google OAuth is enabled in your Supabase project.")
+      setError(error.message || "An error occurred during Google sign up.")
       setLoading(false)
     }
   }

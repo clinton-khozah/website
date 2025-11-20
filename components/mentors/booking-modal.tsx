@@ -1,0 +1,757 @@
+"use client"
+
+import * as React from "react"
+import { useState, useEffect } from "react"
+import { motion, AnimatePresence } from "framer-motion"
+import { X, Calendar, Clock, Shield, CheckCircle, FileText, ArrowLeft } from "lucide-react"
+import { loadStripe, Stripe } from "@stripe/stripe-js"
+import { Elements } from "@stripe/react-stripe-js"
+import { StripePaymentForm } from "@/components/payment/stripe-payment-form"
+import { convertAndFormatPrice } from "@/lib/currency"
+
+interface Mentor {
+  id: number | string
+  name: string
+  title: string
+  avatar: string
+  hourly_rate: number
+  rating: number
+  total_reviews: number
+}
+
+interface SessionBooking {
+  date: string
+  time: string
+  duration: number
+  topic: string
+  notes: string
+  meetingType: "teams" | "google-meet" | "in-person"
+  meetingLink?: string
+}
+
+interface BookingModalProps {
+  mentor: Mentor | null
+  isOpen: boolean
+  onClose: () => void
+  userLocation?: { lat: number; lng: number } | null
+}
+
+export function BookingModal({ mentor, isOpen, onClose, userLocation }: BookingModalProps) {
+  const [currentStep, setCurrentStep] = React.useState(1)
+  const [stripePromise, setStripePromise] = React.useState<Promise<Stripe | null> | null>(null)
+  const [clientSecret, setClientSecret] = React.useState<string>("")
+  const [isCreatingPayment, setIsCreatingPayment] = React.useState(false)
+  const [convertedRate, setConvertedRate] = useState<string>("")
+  const [exchangeRate, setExchangeRate] = useState<number>(1)
+
+  const [sessionData, setSessionData] = React.useState<SessionBooking>({
+    date: "",
+    time: "",
+    duration: 60,
+    topic: "",
+    notes: "",
+    meetingType: "google-meet",
+  })
+
+  // Load Stripe
+  React.useEffect(() => {
+    const loadStripeKey = async () => {
+      try {
+        const response = await fetch("http://127.0.0.1:8000/api/v1/ai/payment/config/")
+        const data = await response.json()
+        if (data.success && data.publishable_key) {
+          setStripePromise(loadStripe(data.publishable_key))
+        }
+      } catch (error) {
+        console.error("Error loading Stripe:", error)
+      }
+    }
+    if (isOpen) {
+      loadStripeKey()
+    }
+  }, [isOpen])
+
+  // Generate meeting link when date/time/topic are filled and meeting type is selected
+  React.useEffect(() => {
+    const initializeMeetingLink = async () => {
+      if (
+        sessionData.meetingType && 
+        sessionData.meetingType !== "in-person" &&
+        sessionData.date &&
+        sessionData.time &&
+        sessionData.topic
+      ) {
+        // Only generate if we don't already have a link
+        if (!sessionData.meetingLink) {
+          const meetingLink = await generateMeetingLink(sessionData.meetingType, sessionData)
+          setSessionData((prev) => ({
+            ...prev,
+            meetingLink,
+          }))
+        }
+      }
+    }
+
+    if (isOpen) {
+      initializeMeetingLink()
+    }
+  }, [isOpen, sessionData.meetingType, sessionData.date, sessionData.time, sessionData.topic])
+
+  // Reset state when modal closes
+  React.useEffect(() => {
+    if (!isOpen) {
+      setCurrentStep(1)
+      setSessionData({
+        date: "",
+        time: "",
+        duration: 60,
+        topic: "",
+        notes: "",
+        meetingType: "google-meet",
+      })
+      setClientSecret("")
+    }
+  }, [isOpen])
+
+  const generateMeetingLink = async (meetingType: string, sessionData: SessionBooking): Promise<string> => {
+    if (meetingType === "in-person") {
+      return ""
+    }
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/api/v1/ai/meetings/session/create/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mentor_id: mentor?.id,
+          meeting_type: meetingType,
+          session_data: sessionData,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to create meeting")
+      }
+
+      const data = await response.json()
+
+      if (data.success && data.meeting?.join_url) {
+        return data.meeting.join_url
+      } else {
+        // Fallback to demo links
+        const sessionId = Math.random().toString(36).substring(2, 15)
+        const timestamp = Date.now()
+
+        switch (meetingType) {
+          case "teams":
+            return `https://teams.microsoft.com/l/meetup-join/19%3ameeting_${sessionId}${timestamp}%40thread.v2/0?context=%7b%22Tid%22%3a%22${timestamp}%22%2c%22Oid%22%3a%22${sessionId}%22%7d`
+          case "google-meet":
+            return `https://meet.google.com/${sessionId}-${timestamp.toString().slice(-6)}`
+          default:
+            return ""
+        }
+      }
+    } catch (error) {
+      console.error("Error creating meeting:", error)
+      // Fallback to demo links
+      const sessionId = Math.random().toString(36).substring(2, 15)
+      const timestamp = Date.now()
+
+      switch (meetingType) {
+        case "teams":
+          return `https://teams.microsoft.com/l/meetup-join/19%3ameeting_${sessionId}${timestamp}%40thread.v2/0?context=%7b%22Tid%22%3a%22${timestamp}%22%2c%22Oid%22%3a%22${sessionId}%22%7d`
+        case "google-meet":
+          return `https://meet.google.com/${sessionId}-${timestamp.toString().slice(-6)}`
+        default:
+          return ""
+      }
+    }
+  }
+
+  const handleSessionDataChange = async (field: keyof SessionBooking, value: string | number) => {
+    const newData = {
+      ...sessionData,
+      [field]: value,
+    }
+
+    // Generate meeting link if meeting type changes
+    if (field === "meetingType" && typeof value === "string") {
+      const meetingLink = await generateMeetingLink(value, newData)
+      newData.meetingLink = meetingLink
+    }
+
+    setSessionData(newData)
+  }
+
+  useEffect(() => {
+    const convertRate = async () => {
+      if (!mentor) return
+      const converted = await convertAndFormatPrice(mentor.hourly_rate, userLocation || null)
+      setConvertedRate(converted.formatted)
+      // Extract exchange rate for total calculation
+      const rateMatch = converted.formatted.match(/[\d,]+\.?\d*/)
+      if (rateMatch) {
+        const convertedValue = parseFloat(rateMatch[0].replace(/,/g, ''))
+        setExchangeRate(convertedValue / mentor.hourly_rate)
+      }
+    }
+    convertRate()
+  }, [mentor, userLocation])
+
+  const calculateTotal = () => {
+    if (!mentor) return 0
+    const totalUSD = (mentor.hourly_rate * sessionData.duration) / 60
+    return totalUSD * exchangeRate
+  }
+
+  const formatTotal = (total: number) => {
+    if (!mentor) return "$0.00"
+    if (convertedRate && exchangeRate !== 1) {
+      const symbol = convertedRate.replace(/[\d,.\s]/g, '').trim()
+      return `${symbol}${total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+    }
+    return `$${total.toFixed(2)}`
+  }
+
+  const handleNextStep = async () => {
+    if (currentStep === 1) {
+      setIsCreatingPayment(true)
+      try {
+        const total = calculateTotal()
+        const response = await fetch("http://127.0.0.1:8000/api/v1/ai/payment/create-intent/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            amount: total,
+            currency: "usd",
+            description: `Mentoring Session: ${sessionData.topic}`,
+            metadata: {
+              mentor_id: mentor?.id,
+              mentor_name: mentor?.name,
+              session_date: sessionData.date,
+              session_time: sessionData.time,
+              session_topic: sessionData.topic,
+            },
+          }),
+        })
+
+        const data = await response.json()
+        if (data.success && data.client_secret) {
+          setClientSecret(data.client_secret)
+          setCurrentStep(2)
+        } else {
+          alert("Failed to initialize payment. Please try again.")
+        }
+      } catch (error) {
+        console.error("Error creating payment intent:", error)
+        alert("Failed to initialize payment. Please try again.")
+      } finally {
+        setIsCreatingPayment(false)
+      }
+    } else if (currentStep < 3) {
+      setCurrentStep(currentStep + 1)
+    }
+  }
+
+  const handlePrevStep = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1)
+    }
+  }
+
+  const handlePaymentSuccess = async (paymentIntentId: string) => {
+    try {
+      const { supabase } = await import('@/lib/supabase')
+      const { data: { user } } = await supabase.auth.getUser()
+      const userEmail = user?.email || "user@example.com"
+      const userName = user?.user_metadata?.full_name || "Valued Learner"
+
+      // Ensure meeting link is generated before saving
+      let finalSessionData = { ...sessionData }
+      if (sessionData.meetingType !== "in-person" && !sessionData.meetingLink) {
+        const meetingLink = await generateMeetingLink(sessionData.meetingType, sessionData)
+        finalSessionData = {
+          ...sessionData,
+          meetingLink,
+        }
+        setSessionData(finalSessionData)
+      }
+
+      // Save booking with meeting link
+      const bookingResponse = await fetch("http://127.0.0.1:8000/api/v1/ai/bookings/save/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mentor_id: mentor?.id,
+          learner_name: userName,
+          learner_email: userEmail,
+          session_data: finalSessionData,
+          payment_intent_id: paymentIntentId,
+          amount: calculateTotal(),
+        }),
+      })
+
+      const bookingData = await bookingResponse.json()
+      console.log("Booking saved:", bookingData)
+
+      // Send confirmation email with meeting link
+      await fetch("http://127.0.0.1:8000/api/v1/ai/send-booking-confirmation/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mentor_name: mentor?.name,
+          session_data: finalSessionData,
+          amount: calculateTotal(),
+          user_email: userEmail,
+          meeting_link: finalSessionData.meetingLink || "",
+        }),
+      })
+
+      setCurrentStep(3)
+    } catch (error) {
+      console.error("Error in post-payment process:", error)
+      setCurrentStep(3)
+    }
+  }
+
+  const generateTimeSlots = () => {
+    const slots = []
+    for (let hour = 9; hour <= 17; hour++) {
+      for (const minutes of [0, 30]) {
+        const timeString = `${hour.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`
+        slots.push(timeString)
+      }
+    }
+    return slots
+  }
+
+  const getMinDate = () => {
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    return tomorrow.toISOString().split("T")[0]
+  }
+
+  if (!mentor) return null
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
+          />
+
+          {/* Modal */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[95vh] overflow-hidden flex flex-col my-8">
+              {/* Header */}
+              <div className="bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-4 relative flex-shrink-0">
+                <button
+                  onClick={onClose}
+                  className="absolute top-4 right-4 text-white hover:bg-white/20 rounded-full p-2 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                <h2 className="text-2xl font-bold text-white">Book a Session</h2>
+              </div>
+
+              {/* Progress Steps */}
+              <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
+                <div className="flex items-center justify-between max-w-2xl mx-auto">
+                  {[
+                    { num: 1, label: "Session Details" },
+                    { num: 2, label: "Payment" },
+                    { num: 3, label: "Confirmation" },
+                  ].map((step, index) => (
+                    <React.Fragment key={step.num}>
+                      <div className="flex flex-col items-center flex-1 relative">
+                        <div className="relative z-10">
+                          <div
+                            className={`w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-500 ${
+                              currentStep >= step.num
+                                ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/50 scale-110 ring-4 ring-blue-500/20"
+                                : "bg-gray-200 text-gray-500 ring-2 ring-gray-300"
+                            }`}
+                          >
+                            {currentStep > step.num ? (
+                              <CheckCircle className="w-6 h-6" />
+                            ) : (
+                              <span>{step.num}</span>
+                            )}
+                          </div>
+                          {currentStep === step.num && (
+                            <div className="absolute inset-0 rounded-full bg-blue-500 animate-ping opacity-20"></div>
+                          )}
+                        </div>
+                        <div
+                          className={`mt-2 text-xs font-semibold text-center transition-all duration-300 ${
+                            currentStep >= step.num ? "text-blue-600 scale-105" : "text-gray-500"
+                          }`}
+                        >
+                          {step.label}
+                        </div>
+                      </div>
+                      {index < 2 && (
+                        <div className="flex-1 h-1 relative -mt-6 -mx-4">
+                          <div className="absolute inset-0 rounded-full overflow-hidden bg-gray-200">
+                            <div
+                              className={`absolute top-0 left-0 h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-700 ease-out ${
+                                currentStep > step.num
+                                  ? "w-full"
+                                  : currentStep === step.num
+                                  ? "w-1/2"
+                                  : "w-0"
+                              }`}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                  {/* Main Content */}
+                  <div className="lg:col-span-3">
+                    {currentStep === 1 && (
+                      <div className="space-y-6">
+                        {/* Date Selection */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <Calendar className="w-4 h-4 inline mr-2" />
+                            Select Date
+                          </label>
+                          <input
+                            type="date"
+                            min={getMinDate()}
+                            value={sessionData.date}
+                            onChange={(e) => handleSessionDataChange("date", e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                          />
+                        </div>
+
+                        {/* Time Selection */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <Clock className="w-4 h-4 inline mr-2" />
+                            Select Time
+                          </label>
+                          <select
+                            value={sessionData.time}
+                            onChange={(e) => handleSessionDataChange("time", e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                          >
+                            <option value="">Select a time</option>
+                            {generateTimeSlots().map((time) => (
+                              <option key={time} value={time}>
+                                {time}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Duration */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Duration</label>
+                          <select
+                            value={sessionData.duration}
+                            onChange={(e) => handleSessionDataChange("duration", parseInt(e.target.value))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            <option value={30}>30 minutes</option>
+                            <option value={60}>1 hour</option>
+                            <option value={90}>1.5 hours</option>
+                            <option value={120}>2 hours</option>
+                          </select>
+                        </div>
+
+                        {/* Meeting Type */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Meeting Type</label>
+                          <div className="grid grid-cols-2 gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleSessionDataChange("meetingType", "google-meet")}
+                              className={`p-3 rounded-lg border text-center transition-colors relative ${
+                                sessionData.meetingType === "google-meet"
+                                  ? "border-blue-500 bg-blue-50 text-blue-600"
+                                  : "border-gray-300 hover:border-gray-400"
+                              }`}
+                            >
+                              <div className="flex justify-center mb-1">
+                                <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <path d="M6 9.5L12 5l6 4.5v9L12 19l-6-4.5v-9z" fill="#00832D"/>
+                                  <path d="M12 5l6 4.5v9L12 19l-6-4.5v-9L12 5z" fill="#34A853"/>
+                                  <path d="M12 5v14l6-4.5v-9L12 5z" fill="#EA4335"/>
+                                  <path d="M6 9.5v9l6-4.5v-9L6 9.5z" fill="#FBBC04"/>
+                                </svg>
+                              </div>
+                              <div className="text-sm font-medium">Google Meet</div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSessionDataChange("meetingType", "teams")}
+                              disabled
+                              className="p-3 rounded-lg border text-center border-gray-200 bg-gray-100 opacity-60 cursor-not-allowed relative"
+                            >
+                              <div className="text-sm font-medium">Microsoft Teams</div>
+                              <div className="absolute top-1 right-1 bg-yellow-500 text-white text-xs px-2 py-0.5 rounded">
+                                Coming Soon
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Topic */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Session Topic</label>
+                          <input
+                            type="text"
+                            value={sessionData.topic}
+                            onChange={(e) => handleSessionDataChange("topic", e.target.value)}
+                            placeholder="What would you like to discuss?"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                          />
+                        </div>
+
+                        {/* Notes */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Additional Notes (Optional)</label>
+                          <textarea
+                            value={sessionData.notes}
+                            onChange={(e) => handleSessionDataChange("notes", e.target.value)}
+                            placeholder="Any specific questions or topics you'd like to cover?"
+                            rows={3}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+
+                        <button
+                          onClick={handleNextStep}
+                          disabled={!sessionData.date || !sessionData.time || !sessionData.topic || isCreatingPayment}
+                          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors"
+                        >
+                          {isCreatingPayment ? (
+                            <div className="flex items-center justify-center space-x-2">
+                              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              <span>Preparing Payment...</span>
+                            </div>
+                          ) : (
+                            "Continue to Payment"
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {currentStep === 2 && (
+                      <div>
+                        <h2 className="text-xl font-bold text-gray-900 mb-6">Payment Information</h2>
+                        {stripePromise && clientSecret ? (
+                          <Elements stripe={stripePromise} options={{ clientSecret }}>
+                            <StripePaymentForm
+                              amount={calculateTotal()}
+                              onSuccess={handlePaymentSuccess}
+                              onError={(error) => {
+                                console.error("Payment error:", error)
+                                alert("Payment failed. Please try again.")
+                              }}
+                              onBack={handlePrevStep}
+                            />
+                          </Elements>
+                        ) : (
+                          <div className="flex items-center justify-center py-12">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {currentStep === 3 && (
+                      <div>
+                        <div className="bg-gradient-to-r from-green-500 to-emerald-600 -m-6 mb-6 p-6 text-white">
+                          <div className="flex items-center space-x-3">
+                            <div className="bg-white bg-opacity-20 p-2 rounded-full">
+                              <CheckCircle className="w-8 h-8" />
+                            </div>
+                            <div>
+                              <h2 className="text-2xl font-bold">Booking Confirmed!</h2>
+                              <p className="text-green-100 text-sm">Payment successful</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+                          <p className="text-sm text-green-800">
+                            🎉 Your session with <span className="font-semibold">{mentor?.name}</span> has been successfully booked!
+                          </p>
+                        </div>
+
+                        <div className="space-y-4 mb-6">
+                          <h3 className="font-semibold text-gray-900 text-lg">Session Details</h3>
+                          <div className="space-y-3">
+                            <div className="flex items-center space-x-3 text-sm">
+                              <Calendar className="w-4 h-4 text-gray-400" />
+                              <span className="text-gray-600">Date:</span>
+                              <span className="font-medium text-gray-900">
+                                {new Date(sessionData.date).toLocaleDateString("en-US", {
+                                  weekday: "long",
+                                  year: "numeric",
+                                  month: "long",
+                                  day: "numeric",
+                                })}
+                              </span>
+                            </div>
+                            <div className="flex items-center space-x-3 text-sm">
+                              <Clock className="w-4 h-4 text-gray-400" />
+                              <span className="text-gray-600">Time:</span>
+                              <span className="font-medium text-gray-900">{sessionData.time}</span>
+                            </div>
+                            <div className="flex items-center space-x-3 text-sm">
+                              <Clock className="w-4 h-4 text-gray-400" />
+                              <span className="text-gray-600">Duration:</span>
+                              <span className="font-medium text-gray-900">{sessionData.duration} minutes</span>
+                            </div>
+                            <div className="flex items-start space-x-3 text-sm">
+                              <FileText className="w-4 h-4 text-gray-400 mt-0.5" />
+                              <span className="text-gray-600">Topic:</span>
+                              <span className="font-medium text-gray-900 flex-1">{sessionData.topic}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Meeting Link */}
+                        {sessionData.meetingLink && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                            <label className="block text-sm font-medium text-blue-900 mb-2">
+                              Meeting Link
+                            </label>
+                            <div className="flex items-center space-x-2">
+                              <input
+                                type="text"
+                                value={sessionData.meetingLink}
+                                readOnly
+                                className="flex-1 px-3 py-2 bg-white border border-blue-300 rounded-lg text-sm text-gray-700"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(sessionData.meetingLink || "")
+                                  alert("Meeting link copied to clipboard!")
+                                }}
+                                className="px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors"
+                              >
+                                Copy
+                              </button>
+                            </div>
+                            <p className="text-xs text-blue-600 mt-2">
+                              This link has been sent to your email. You can also copy it here.
+                            </p>
+                          </div>
+                        )}
+
+                        <button
+                          onClick={onClose}
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors"
+                        >
+                          Got it, Thanks!
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Sidebar */}
+                  <div className="lg:col-span-2">
+                    <div className="bg-gray-50 rounded-xl border border-gray-200 p-6 sticky top-6">
+                      <div className="mb-6">
+                        <div className="flex items-center space-x-4 mb-4">
+                          <img
+                            src={mentor.avatar}
+                            alt={mentor.name}
+                            className="w-16 h-16 rounded-full object-cover ring-4 ring-blue-500/20 shadow-lg"
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement
+                              target.src = "/images/user/user-01.jpg"
+                            }}
+                          />
+                          <div className="flex-1">
+                            <h3 className="text-lg font-bold text-gray-900 mb-1">{mentor.name}</h3>
+                            <p className="text-sm font-medium text-gray-600 mb-2">{mentor.title}</p>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-yellow-400 text-lg">★</span>
+                              <span className="text-sm font-semibold text-gray-900 ml-1">{mentor.rating}</span>
+                              <span className="text-sm text-gray-500">({mentor.total_reviews} reviews)</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-gray-200 pt-6 mb-6">
+                        <h4 className="text-lg font-semibold text-gray-900 mb-4">Pricing</h4>
+                        <div className="space-y-4">
+                          <div className="flex justify-between items-center py-2">
+                            <span className="text-sm text-gray-600">Hourly Rate:</span>
+                            <span className="text-base font-semibold text-gray-900">{convertedRate || `$${mentor.hourly_rate.toFixed(2)}`}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-2">
+                            <span className="text-sm text-gray-600">Duration:</span>
+                            <span className="text-base font-semibold text-gray-900">{sessionData.duration} min</span>
+                          </div>
+                          <div className="flex justify-between items-center border-t-2 border-gray-300 pt-4 mt-4">
+                            <span className="text-base font-bold text-gray-900">Total:</span>
+                            <span className="text-2xl font-bold text-blue-600">{formatTotal(calculateTotal())}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-200">
+                        <div className="flex items-start space-x-3">
+                          <div className="flex-shrink-0">
+                            <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+                              <Shield className="w-6 h-6 text-green-600" />
+                            </div>
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-green-900 font-semibold mb-1 text-sm">Secure Payment</p>
+                            <p className="text-xs text-green-800 leading-relaxed">
+                              Your payment is protected. If your session doesn't happen, you'll receive a full refund.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  )
+}
+

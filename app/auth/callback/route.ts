@@ -7,8 +7,8 @@ export async function GET(request: NextRequest) {
   const userType = requestUrl.searchParams.get('user_type')
   const fullName = requestUrl.searchParams.get('full_name')
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://qvyofdffddwgpduljlit.supabase.co'
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2eW9mZGZmZGR3Z3BkdWxqbGl0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY4NDE5ODUsImV4cCI6MjA3MjQxNzk4NX0.TEEUTy4cgKsL_g8QGdupjCkvXqueN8qFFrf4JO6QQPs'
 
   if (!supabaseUrl || !supabaseAnonKey) {
     console.error('Missing Supabase environment variables')
@@ -25,40 +25,35 @@ export async function GET(request: NextRequest) {
     }
 
     if (data.user) {
-      // Check if user already exists in users_account
+      // First check if user is a mentor
+      const { data: existingMentor } = await supabase
+        .from('mentors')
+        .select('id, email')
+        .eq('id', data.user.id)
+        .single()
+
+      // If user is a mentor, redirect to tutor dashboard
+      if (existingMentor) {
+        return NextResponse.redirect(new URL('/dashboard/tutor', requestUrl.origin))
+      }
+
+      // Determine which table to use based on user type
+      const userTypeToUse = userType || 'student'
+      const isMentor = userTypeToUse === 'mentor' || userTypeToUse === 'tutor'
+      const tableName = isMentor ? 'mentors' : 'students'
+
+      // Check if user already exists
       const { data: existingUser } = await supabase
-        .from('users_account')
+        .from(tableName)
         .select('*')
         .eq('id', data.user.id)
         .single()
 
       if (!existingUser) {
-        // Create user profile in users_account
-        const userTypeToUse = userType || 'student'
         const nameToUse = fullName || data.user.user_metadata?.full_name || data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User'
 
-        const { error: profileError } = await supabase
-          .from('users_account')
-          .insert({
-            id: data.user.id,
-            email: data.user.email,
-            full_name: nameToUse,
-            user_type: userTypeToUse,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            verified: data.user.email_confirmed_at ? true : false,
-            bio: null,
-            website: null,
-            social_links: {},
-            settings: {}
-          })
-
-        if (profileError) {
-          console.error('Error creating user profile:', profileError)
-        }
-
-        // If user is mentor or tutor, create mentor record
-        if (userTypeToUse === 'mentor' || userTypeToUse === 'tutor') {
+        if (isMentor) {
+          // Create mentor record
           const { error: mentorError } = await supabase
             .from('mentors')
             .insert({
@@ -108,17 +103,48 @@ export async function GET(request: NextRequest) {
           if (mentorError) {
             console.error('Error creating mentor record:', mentorError)
           }
+        } else {
+          // Create student record
+          const { error: studentError } = await supabase
+            .from('students')
+            .insert({
+              id: data.user.id,
+              email: data.user.email || '',
+              full_name: nameToUse,
+              avatar_url: data.user.user_metadata?.avatar_url || null,
+              bio: null,
+              website: null,
+              phone_number: null,
+              date_of_birth: null,
+              gender: null,
+              country: null,
+              city: null,
+              timezone: null,
+              native_language: null,
+              languages_spoken: '[]',
+              current_level: 'beginner',
+              interests: '[]',
+              learning_goals: null,
+              preferred_learning_style: null,
+              availability_hours: null,
+              budget_range: null,
+              social_links: '{}',
+              settings: '{}',
+              verified: data.user.email_confirmed_at ? true : false,
+              status: 'active',
+              is_complete: false,
+              role: 'student',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+
+          if (studentError) {
+            console.error('Error creating student record:', studentError)
+          }
         }
       }
 
-      // Get user type for redirect
-      const { data: userData } = await supabase
-        .from('users_account')
-        .select('user_type')
-        .eq('id', data.user.id)
-        .single()
-
-      const userTypeForRedirect = userData?.user_type || userType || 'student'
+      const userTypeForRedirect = userTypeToUse
 
       // Redirect based on user type
       if (userTypeForRedirect === 'mentor' || userTypeForRedirect === 'tutor') {
