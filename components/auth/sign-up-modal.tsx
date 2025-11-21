@@ -60,7 +60,7 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
         email: formData.email,
         password: formData.password,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: `${window.location.origin}/auth/callback?user_type=${formData.userType}&full_name=${encodeURIComponent(formData.fullName)}`,
           data: {
             full_name: formData.fullName,
             user_type: formData.userType
@@ -74,62 +74,10 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
         throw new Error("Failed to create user account")
       }
 
-      // Determine which table to use based on user type
-      const isMentor = formData.userType === 'mentor' || formData.userType === 'tutor'
-      
-      if (isMentor) {
-        // Create mentor record
-        const { error: mentorError } = await supabase
-          .from('mentors')
-          .insert({
-            id: authData.user.id,
-            name: formData.fullName,
-            email: formData.email,
-            title: '',
-            description: '',
-            specialization: '[]',
-            rating: 1.00,
-            total_reviews: 0,
-            hourly_rate: 0.00,
-            avatar: '',
-            experience: 0,
-            languages: '[]',
-            availability: 'Available now',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            phone_number: '',
-            gender: '',
-            age: null,
-            country: '',
-            latitude: null,
-            longitude: null,
-            sessions_conducted: 0,
-            qualifications: '',
-            id_document: '',
-            id_number: '',
-            cv_document: '',
-            payment_method: '',
-            linkedin_profile: '',
-            github_profile: '',
-            twitter_profile: '',
-            facebook_profile: '',
-            instagram_profile: '',
-            personal_website: '',
-            bank_name: '',
-            account_holder_name: '',
-            account_number: '',
-            routing_number: '',
-            payment_account_details: '{}',
-            payment_period: 'per_session',
-            is_complete: false,
-            is_verified: false
-          })
-
-        if (mentorError) {
-          console.error('Error creating mentor record:', mentorError)
-          // Don't throw error, user account is created, mentor record can be completed later
-        }
-      }
+      // Note: Record creation will happen in the callback route after email verification
+      // This ensures the session is properly established
+      console.log('User signed up successfully. User type:', formData.userType)
+      console.log('Mentor/Student record will be created after email verification in callback route.')
 
       // Show verification modal
       setShowVerification(true)
@@ -180,7 +128,8 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
       console.log("Supabase Google authentication successful:", data.user)
 
       // Determine which table to use based on user type
-      const isMentor = formData.userType === 'mentor' || formData.userType === 'tutor'
+      // Mentor, Tutor, or Other (user) should go to mentors table
+      const isMentor = formData.userType === 'mentor' || formData.userType === 'tutor' || formData.userType === 'user'
       const tableName = isMentor ? 'mentors' : 'students'
 
       // Check if user already exists
@@ -194,8 +143,9 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
         const nameToUse = formData.fullName || data.user.user_metadata?.full_name || data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User'
 
         if (isMentor) {
+          console.log('Creating mentor record for Google sign-up user:', data.user.id, 'Type:', formData.userType)
           // Create mentor record
-          const { error: mentorError } = await supabase
+          const { data: mentorData, error: mentorError } = await supabase
             .from('mentors')
             .insert({
               id: data.user.id,
@@ -240,12 +190,19 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
               is_complete: false,
               is_verified: false
             })
+            .select()
+            .single()
 
           if (mentorError) {
             console.error('Error creating mentor record:', mentorError)
+            console.error('Error details:', JSON.stringify(mentorError, null, 2))
+            setError(`Mentor profile setup failed: ${mentorError.message}`)
+          } else {
+            console.log('Mentor record created successfully:', mentorData)
           }
-        } else {
+        } else if (formData.userType === 'student') {
           // Create student record
+          console.log('Creating student record for Google sign-up user:', data.user.id)
           const { error: studentError } = await supabase
             .from('students')
             .insert({
@@ -273,12 +230,17 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
               settings: '{}',
               verified: data.user.email_confirmed_at ? true : false,
               status: 'active',
+              role: 'student',
+              is_complete: false,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
             })
 
           if (studentError) {
             console.error('Error creating student record:', studentError)
+            setError(`Student profile setup failed: ${studentError.message}`)
+          } else {
+            console.log('Student record created successfully')
           }
         }
       }
@@ -287,14 +249,14 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
 
       console.log('Sign-up complete - User type:', userTypeForRedirect)
 
-      // Redirect based on user type
-      if (userTypeForRedirect === 'mentor' || userTypeForRedirect === 'tutor') {
-        console.log('Redirecting to tutor dashboard')
-        router.push('/dashboard/tutor')
-      } else {
-        console.log('Redirecting to learner dashboard')
-        router.push('/dashboard/learner')
-      }
+        // Redirect based on user type
+        if (userTypeForRedirect === 'mentor' || userTypeForRedirect === 'tutor' || userTypeForRedirect === 'user') {
+          console.log('Redirecting to company dashboard')
+          router.push('/dashboard')
+        } else {
+          console.log('Redirecting to learner dashboard')
+          router.push('/dashboard/learner')
+        }
 
       onClose()
     } catch (error: any) {
@@ -304,9 +266,51 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
     }
   }
 
-  const handleVerificationComplete = () => {
+  const handleVerificationComplete = async () => {
     setShowVerification(false)
     onClose()
+    
+    // Wait for session to be established and verify user exists
+    try {
+      // Wait a moment for the session to be established
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      // Verify user is authenticated
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      if (!user) {
+        console.error('User not authenticated after verification')
+        return
+      }
+
+        // Check if user is a mentor/tutor/other
+        if (formData.userType === 'mentor' || formData.userType === 'tutor' || formData.userType === 'user') {
+          // Verify mentor record exists
+          const { data: mentorData } = await supabase
+            .from('mentors')
+            .select('id')
+            .eq('id', user.id)
+            .maybeSingle()
+          
+          if (mentorData) {
+            window.location.href = '/dashboard'
+          } else {
+            // Mentor record might not exist yet, still redirect to company dashboard
+            // The dashboard will handle creating the record if needed
+            window.location.href = '/dashboard'
+          }
+        } else {
+          window.location.href = '/dashboard/learner'
+        }
+    } catch (error) {
+      console.error('Error during verification redirect:', error)
+        // Fallback redirect
+        if (formData.userType === 'mentor' || formData.userType === 'tutor' || formData.userType === 'user') {
+          window.location.href = '/dashboard'
+        } else {
+          window.location.href = '/dashboard/learner'
+        }
+    }
   }
 
   const handleSkipVerification = () => {

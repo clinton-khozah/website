@@ -123,25 +123,25 @@ export function VerificationModal({ isOpen, onClose, email, onVerificationComple
             transition={{ duration: 0.2 }}
             className="relative w-full max-w-md mx-4"
           >
-            <div className="bg-[#1a1e32] border border-[#2a2e45] rounded-xl shadow-lg p-6">
+            <div className="bg-white border border-gray-200 rounded-xl shadow-xl p-6">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-white">Verify Your Email</h2>
+                <h2 className="text-2xl font-bold text-gray-900">Verify Your Email</h2>
                 <button
                   onClick={onClose}
-                  className="text-gray-400 hover:text-white transition-colors"
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
               <div className="space-y-4">
-                <p className="text-gray-300">
+                <p className="text-gray-600">
                   We've sent a 6-digit verification code to{" "}
-                  <span className="text-[#9575ff] font-medium">{email}</span>
+                  <span className="text-blue-600 font-medium">{email}</span>
                 </p>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-white">Verification Code</label>
+                  <label className="text-sm font-medium text-gray-700">Verification Code</label>
                   <div className="flex gap-2 justify-center">
                     {otp.map((digit, index) => (
                       <input
@@ -151,7 +151,7 @@ export function VerificationModal({ isOpen, onClose, email, onVerificationComple
                         value={digit}
                         onChange={(e) => handleOtpChange(index, e.target.value)}
                         onKeyDown={(e) => handleKeyDown(index, e)}
-                        className="w-12 h-12 text-center text-xl bg-[#1a1f2e] border border-[#2a2e45] rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-[#9575ff] focus:border-transparent"
+                        className="w-12 h-12 text-center text-xl bg-gray-50 border-2 border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                         maxLength={1}
                         pattern="[0-9]*"
                         inputMode="numeric"
@@ -161,7 +161,7 @@ export function VerificationModal({ isOpen, onClose, email, onVerificationComple
                 </div>
 
                 {error && (
-                  <p className="text-sm text-red-500">{error}</p>
+                  <p className="text-sm text-red-600">{error}</p>
                 )}
 
                 <div className="flex justify-between items-center">
@@ -169,23 +169,20 @@ export function VerificationModal({ isOpen, onClose, email, onVerificationComple
                     type="button"
                     onClick={handleResendCode}
                     disabled={resendDisabled}
-                    className="text-sm text-[#9575ff] hover:text-[#8a63ff] disabled:text-gray-500 disabled:cursor-not-allowed"
+                    className="text-sm text-blue-600 hover:text-blue-700 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
                   >
                     {resendDisabled ? `Resend code in ${countdown}s` : "Resend code"}
                   </button>
                 </div>
 
-                <AnimatedButton
+                <button
+                  type="button"
                   onClick={handleVerify}
-                  variant="primary-gradient"
-                  className="w-full"
-                  hoverScale={1.02}
-                  glowOnHover={true}
-                  sweep={true}
                   disabled={loading || otp.some(digit => !digit)}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? "Verifying..." : "Verify"}
-                </AnimatedButton>
+                </button>
 
                 {showSuccess && (
                   <div className="mt-4 space-y-4">

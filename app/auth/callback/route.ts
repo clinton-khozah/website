@@ -21,43 +21,59 @@ export async function GET(request: NextRequest) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code)
 
     if (error) {
+      console.error('Error exchanging code for session:', error)
       return NextResponse.redirect(new URL('/?error=auth_failed', requestUrl.origin))
     }
 
-    if (data.user) {
-      // First check if user is a mentor
-      const { data: existingMentor } = await supabase
-        .from('mentors')
-        .select('id, email')
-        .eq('id', data.user.id)
-        .single()
+    if (data.user && data.session) {
+      // Create a new client with the session for authenticated requests
+      const supabaseWithSession = createClient(supabaseUrl, supabaseAnonKey, {
+        global: {
+          headers: {
+            Authorization: `Bearer ${data.session.access_token}`
+          }
+        }
+      })
+      
+      // Use the authenticated client for database operations
+      const authenticatedSupabase = supabaseWithSession
+      // Determine which table to use based on user type
+      // Check URL param first, then user metadata, then default to student
+      const userTypeToUse = userType || data.user.user_metadata?.user_type || 'student'
+      // Mentor, Tutor, or Other (user) should go to mentors table
+      const isMentor = userTypeToUse === 'mentor' || userTypeToUse === 'tutor' || userTypeToUse === 'user'
 
-      // If user is a mentor, redirect to tutor dashboard
+      // First check if user is already a mentor - use user_id column
+      const { data: existingMentor } = await authenticatedSupabase
+        .from('mentors')
+        .select('id, email, user_id')
+        .eq('user_id', data.user.id)
+        .maybeSingle()
+
+      // If user is a mentor, redirect to company dashboard (don't create student record)
       if (existingMentor) {
-        return NextResponse.redirect(new URL('/dashboard/tutor', requestUrl.origin))
+        console.log('Mentor record already exists, redirecting to dashboard')
+        return NextResponse.redirect(new URL('/dashboard', requestUrl.origin))
       }
 
-      // Determine which table to use based on user type
-      const userTypeToUse = userType || 'student'
-      const isMentor = userTypeToUse === 'mentor' || userTypeToUse === 'tutor'
-      const tableName = isMentor ? 'mentors' : 'students'
-
-      // Check if user already exists
-      const { data: existingUser } = await supabase
-        .from(tableName)
-        .select('*')
-        .eq('id', data.user.id)
-        .single()
-
-      if (!existingUser) {
+      // If user type is mentor/tutor but no mentor record exists, create one
+      if (isMentor) {
         const nameToUse = fullName || data.user.user_metadata?.full_name || data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User'
+        
+        // Check if mentor record already exists (double check) - use user_id column
+        const { data: existingMentorCheck } = await authenticatedSupabase
+          .from('mentors')
+          .select('id')
+          .eq('user_id', data.user.id)
+          .maybeSingle()
 
-        if (isMentor) {
-          // Create mentor record
-          const { error: mentorError } = await supabase
+        if (!existingMentorCheck) {
+          console.log('Creating mentor record in callback route for user:', data.user.id, 'Type:', userTypeToUse)
+          // Create mentor record - use user_id to link to Supabase Auth
+          const { data: newMentor, error: mentorError } = await authenticatedSupabase
             .from('mentors')
             .insert({
-              id: data.user.id,
+              user_id: data.user.id,
               name: nameToUse,
               email: data.user.email || '',
               title: '',
@@ -99,13 +115,39 @@ export async function GET(request: NextRequest) {
               is_complete: false,
               is_verified: false
             })
+            .select()
+            .single()
 
           if (mentorError) {
-            console.error('Error creating mentor record:', mentorError)
+            console.error('Error creating mentor record in callback:', mentorError)
+            console.error('Error details:', JSON.stringify(mentorError, null, 2))
+          } else {
+            console.log('Mentor record created successfully in callback:', newMentor)
           }
+          
+          // Redirect to company dashboard after creating mentor record
+          return NextResponse.redirect(new URL('/dashboard', requestUrl.origin))
         } else {
+          console.log('Mentor record already exists, redirecting to company dashboard')
+          return NextResponse.redirect(new URL('/dashboard', requestUrl.origin))
+        }
+      }
+
+      // Only create student record if user is NOT a mentor/tutor
+      if (!isMentor) {
+        // Check if user already exists in students table
+        const { data: existingStudent } = await authenticatedSupabase
+          .from('students')
+          .select('*')
+          .eq('id', data.user.id)
+          .maybeSingle()
+
+        if (!existingStudent) {
+          const nameToUse = fullName || data.user.user_metadata?.full_name || data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User'
+          
+          console.log('Creating student record in callback route for user:', data.user.id)
           // Create student record
-          const { error: studentError } = await supabase
+          const { error: studentError } = await authenticatedSupabase
             .from('students')
             .insert({
               id: data.user.id,
@@ -147,8 +189,8 @@ export async function GET(request: NextRequest) {
       const userTypeForRedirect = userTypeToUse
 
       // Redirect based on user type
-      if (userTypeForRedirect === 'mentor' || userTypeForRedirect === 'tutor') {
-        return NextResponse.redirect(new URL('/dashboard/tutor', requestUrl.origin))
+      if (userTypeForRedirect === 'mentor' || userTypeForRedirect === 'tutor' || userTypeForRedirect === 'user') {
+        return NextResponse.redirect(new URL('/dashboard', requestUrl.origin))
       } else {
         return NextResponse.redirect(new URL('/dashboard/learner', requestUrl.origin))
       }

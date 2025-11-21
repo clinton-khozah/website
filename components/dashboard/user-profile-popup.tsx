@@ -59,6 +59,13 @@ interface UserProfilePopupProps {
     status?: string | null;
     is_complete?: boolean | null;
     role?: string | null;
+    // Mentor/Tutor specific fields
+    title?: string | null;
+    experience?: string | number | null;
+    hourly_rate?: number | null;
+    availability?: string | null;
+    specialization?: string | string[] | null;
+    qualifications?: string | null;
   } | null;
   onVerificationSubmit?: () => void;
 }
@@ -74,6 +81,7 @@ export function UserProfilePopup({
   const [isLoading, setIsLoading] = React.useState(false);
   const [showSuccess, setShowSuccess] = React.useState(false);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = React.useState(false);
+  const [profileData, setProfileData] = React.useState(userData);
   const [formData, setFormData] = React.useState({
     full_name: userData?.full_name || "",
     website: userData?.website || "",
@@ -93,49 +101,192 @@ export function UserProfilePopup({
       : typeof userData?.interests === "string"
       ? userData.interests.replace(/[\[\]"]/g, "") || ""
       : "",
+    // Mentor/Tutor specific fields
+    hourly_rate: userData?.hourly_rate || 0,
+    experience: userData?.experience || "",
+    specialization: Array.isArray(userData?.specialization)
+      ? userData.specialization.join(", ")
+      : typeof userData?.specialization === "string"
+      ? userData.specialization.replace(/[\[\]"]/g, "") || ""
+      : "",
   });
 
-  // Update form data when userData changes
+  // Update form data when profileData changes
   React.useEffect(() => {
-    if (userData) {
+    if (profileData) {
       setFormData({
-        full_name: userData.full_name || "",
-        website: userData.website || "",
-        bio: userData.bio || "",
-        social_links: userData.social_links || {},
-        phone_number: userData.phone_number || "",
-        country: userData.country || "",
-        city: userData.city || "",
-        current_level: userData.current_level || "",
-        languages_spoken: Array.isArray(userData.languages_spoken)
-          ? userData.languages_spoken.join(", ")
-          : typeof userData.languages_spoken === "string"
-          ? userData.languages_spoken.replace(/[\[\]"]/g, "") || ""
+        full_name: profileData.full_name || "",
+        website: profileData.website || "",
+        bio: profileData.bio || "",
+        social_links: profileData.social_links || {},
+        phone_number: profileData.phone_number || "",
+        country: profileData.country || "",
+        city: profileData.city || "",
+        current_level: profileData.current_level || "",
+        languages_spoken: Array.isArray(profileData.languages_spoken)
+          ? profileData.languages_spoken.join(", ")
+          : typeof profileData.languages_spoken === "string"
+          ? profileData.languages_spoken.replace(/[\[\]"]/g, "") || ""
           : "",
-        interests: Array.isArray(userData.interests)
-          ? userData.interests.join(", ")
-          : typeof userData.interests === "string"
-          ? userData.interests.replace(/[\[\]"]/g, "") || ""
+        interests: Array.isArray(profileData.interests)
+          ? profileData.interests.join(", ")
+          : typeof profileData.interests === "string"
+          ? profileData.interests.replace(/[\[\]"]/g, "") || ""
+          : "",
+        // Mentor/Tutor specific fields
+        hourly_rate: profileData?.hourly_rate || 0,
+        experience: profileData?.experience || "",
+        specialization: Array.isArray(profileData?.specialization)
+          ? profileData.specialization.join(", ")
+          : typeof profileData?.specialization === "string"
+          ? profileData.specialization.replace(/[\[\]"]/g, "") || ""
           : "",
       });
     }
-  }, [userData]);
+  }, [profileData]);
+
+  // Fetch user data if not provided
+  React.useEffect(() => {
+    const fetchProfileData = async () => {
+      // If userData is provided, use it
+      if (userData) {
+        setProfileData(userData);
+        return;
+      }
+
+      // If popup is open but no userData, fetch it
+      if (isOpen && !userData) {
+        try {
+          const {
+            data: { user },
+          } = await supabase.auth.getUser();
+          if (!user) {
+            console.error("No authenticated user found");
+            return;
+          }
+
+          // Check mentors table first
+          const { data: mentorData, error: mentorError } = await supabase
+            .from("mentors")
+            .select("*")
+            .eq("user_id", user.id)
+            .maybeSingle();
+
+          if (!mentorError && mentorData) {
+            const verified =
+              mentorData.is_verified === true ||
+              mentorData.is_verified === "true" ||
+              mentorData.is_verified === "pending"
+                ? mentorData.is_verified === "pending"
+                  ? "pending"
+                  : true
+                : false;
+
+            // Determine user type
+            const userTypeFromMetadata = user.user_metadata?.user_type;
+            let userType = "mentor";
+
+            if (userTypeFromMetadata === "tutor") {
+              userType = "tutor";
+            } else if (userTypeFromMetadata === "mentor") {
+              userType = "mentor";
+            } else if (userTypeFromMetadata === "user") {
+              const titleLower = (mentorData.title || "").toLowerCase();
+              if (
+                titleLower.includes("tutor") ||
+                titleLower.includes("tutoring")
+              ) {
+                userType = "tutor";
+              } else {
+                userType = "mentor";
+              }
+            }
+
+            setProfileData({
+              ...mentorData,
+              id: mentorData.user_id || user.id,
+              full_name: mentorData.name,
+              user_type: userType,
+              verified,
+              avatar_url: mentorData.avatar || null,
+              bio: mentorData.description || null,
+              email: mentorData.email || user.email || null,
+            });
+            return;
+          }
+
+          // Check students table
+          const { data: studentData, error: studentError } = await supabase
+            .from("students")
+            .select("*")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          if (!studentError && studentData) {
+            const verified =
+              studentData.verified === true ||
+              studentData.verified === "true" ||
+              studentData.verified === "pending"
+                ? studentData.verified === "pending"
+                  ? "pending"
+                  : true
+                : false;
+
+            setProfileData({
+              ...studentData,
+              user_type: "student",
+              verified,
+            });
+            return;
+          }
+
+          // If no data found in either table, create a basic profile from auth user
+          setProfileData({
+            id: user.id,
+            full_name:
+              user.user_metadata?.full_name ||
+              user.email?.split("@")[0] ||
+              "User",
+            email: user.email || "",
+            user_type: user.user_metadata?.user_type || "user",
+            verified: false,
+            avatar_url: null,
+            bio: null,
+            phone_number: null,
+            country: null,
+            city: null,
+            website: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            languages_spoken: [],
+            interests: [],
+            social_links: {},
+          } as any);
+        } catch (error) {
+          console.error("Error fetching profile data:", error);
+        }
+      }
+    };
+
+    fetchProfileData();
+  }, [isOpen, userData]);
 
   const handleVerificationSubmit = async (formData: any) => {
-    if (!userData) return;
+    if (!profileData) return;
     try {
       setIsLoading(true);
 
       // Determine which table to update based on user type
       const isMentor =
-        userData.user_type === "mentor" || userData.user_type === "tutor";
+        profileData?.user_type === "mentor" ||
+        profileData?.user_type === "tutor";
       const tableName = isMentor ? "mentors" : "students";
       const verifiedField = isMentor ? "is_verified" : "verified";
 
       const { error } = await supabase
         .from(tableName)
         .update({ [verifiedField]: "pending" })
-        .eq("id", userData.id);
+        .eq("id", profileData?.id);
 
       if (error) throw error;
 
@@ -163,48 +314,48 @@ export function UserProfilePopup({
 
       // Only update fields that have changed and are not empty
       if (
-        formData.full_name !== userData.full_name &&
+        formData.full_name !== profileData?.full_name &&
         formData.full_name.trim() !== ""
       ) {
         updates.full_name = formData.full_name;
       }
 
       if (
-        formData.website !== userData.website &&
+        formData.website !== profileData?.website &&
         formData.website.trim() !== ""
       ) {
         updates.website = formData.website;
       }
 
-      if (formData.bio !== userData.bio && formData.bio.trim() !== "") {
+      if (formData.bio !== profileData?.bio && formData.bio.trim() !== "") {
         updates.bio = formData.bio;
       }
 
       // Update phone_number
-      if (formData.phone_number !== (userData.phone_number || "")) {
+      if (formData.phone_number !== (profileData?.phone_number || "")) {
         updates.phone_number = formData.phone_number.trim() || null;
       }
 
       // Update country
-      if (formData.country !== (userData.country || "")) {
+      if (formData.country !== (profileData?.country || "")) {
         updates.country = formData.country.trim() || null;
       }
 
       // Update city
-      if (formData.city !== (userData.city || "")) {
+      if (formData.city !== (profileData?.city || "")) {
         updates.city = formData.city.trim() || null;
       }
 
       // Update current_level
-      if (formData.current_level !== (userData.current_level || "")) {
+      if (formData.current_level !== (profileData?.current_level || "")) {
         updates.current_level = formData.current_level.trim() || null;
       }
 
       // Update languages_spoken (convert comma-separated string to array)
-      const currentLanguages = Array.isArray(userData.languages_spoken)
-        ? userData.languages_spoken.join(", ")
-        : typeof userData.languages_spoken === "string"
-        ? userData.languages_spoken.replace(/[\[\]"]/g, "") || ""
+      const currentLanguages = Array.isArray(profileData?.languages_spoken)
+        ? profileData?.languages_spoken.join(", ")
+        : typeof profileData?.languages_spoken === "string"
+        ? profileData?.languages_spoken.replace(/[\[\]"]/g, "") || ""
         : "";
       if (formData.languages_spoken !== currentLanguages) {
         updates.languages_spoken = formData.languages_spoken.trim()
@@ -216,10 +367,10 @@ export function UserProfilePopup({
       }
 
       // Update interests (convert comma-separated string to array)
-      const currentInterests = Array.isArray(userData.interests)
-        ? userData.interests.join(", ")
-        : typeof userData.interests === "string"
-        ? userData.interests.replace(/[\[\]"]/g, "") || ""
+      const currentInterests = Array.isArray(profileData?.interests)
+        ? profileData?.interests.join(", ")
+        : typeof profileData?.interests === "string"
+        ? profileData?.interests.replace(/[\[\]"]/g, "") || ""
         : "";
       if (formData.interests !== currentInterests) {
         updates.interests = formData.interests.trim()
@@ -233,19 +384,60 @@ export function UserProfilePopup({
       // Only update social_links if it has changed and is not empty
       if (
         JSON.stringify(formData.social_links) !==
-          JSON.stringify(userData.social_links) &&
+          JSON.stringify(profileData?.social_links) &&
         Object.keys(formData.social_links).length > 0
       ) {
         updates.social_links = formData.social_links;
+      }
+
+      // Determine which table to update based on user type
+      const isMentor =
+        profileData?.user_type === "mentor" ||
+        profileData?.user_type === "tutor";
+
+      // Update mentor/tutor specific fields
+      if (isMentor) {
+        // Update hourly_rate
+        if (formData.hourly_rate !== (profileData?.hourly_rate || 0)) {
+          updates.hourly_rate =
+            parseFloat(formData.hourly_rate.toString()) || 0;
+        }
+
+        // Update experience
+        if (formData.experience !== (profileData?.experience || "")) {
+          updates.experience = formData.experience.toString();
+        }
+
+        // Update specialization (convert comma-separated string to array)
+        const currentSpecialization = Array.isArray(profileData?.specialization)
+          ? profileData?.specialization.join(", ")
+          : typeof profileData?.specialization === "string"
+          ? (() => {
+              try {
+                return (
+                  JSON.parse(profileData.specialization.replace(/'/g, '"')) ||
+                  []
+                );
+              } catch {
+                return profileData.specialization.replace(/[\[\]"]/g, "") || "";
+              }
+            })()
+          : "";
+        const formSpecialization = formData.specialization.trim();
+        if (formSpecialization !== currentSpecialization) {
+          updates.specialization = formSpecialization
+            ? formSpecialization
+                .split(",")
+                .map((spec) => spec.trim())
+                .filter(Boolean)
+            : [];
+        }
       }
 
       // Only update if there are actual changes
       if (Object.keys(updates).length > 0) {
         updates.updated_at = new Date().toISOString();
 
-        // Determine which table to update based on user type
-        const isMentor =
-          userData.user_type === "mentor" || userData.user_type === "tutor";
         const tableName = isMentor ? "mentors" : "students";
 
         // For mentors, map full_name to name
@@ -257,7 +449,7 @@ export function UserProfilePopup({
         const { error } = await supabase
           .from(tableName)
           .update(updates)
-          .eq("id", userData.id);
+          .eq(isMentor ? "user_id" : "id", profileData?.id || "");
 
         if (error) throw error;
 
@@ -290,7 +482,7 @@ export function UserProfilePopup({
   };
 
   const getVerificationStatus = () => {
-    const verified = userData?.verified;
+    const verified = profileData?.verified;
     // Handle both boolean and string values
     if (verified === true || verified === "true") {
       return {
@@ -404,10 +596,18 @@ export function UserProfilePopup({
 
           {/* Popup Card */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: -20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: -20 }}
-            className="fixed top-[10%] left-1/2 -translate-x-1/2 w-full max-w-lg max-h-[80vh] overflow-y-auto bg-white border border-gray-200 rounded-xl p-6 z-50 shadow-2xl mx-auto"
+            initial={{ opacity: 0, scale: 0.95, x: "-50%", y: "-50%" }}
+            animate={{ opacity: 1, scale: 1, x: "-50%", y: "-50%" }}
+            exit={{ opacity: 0, scale: 0.95, x: "-50%", y: "-50%" }}
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              width: "90%",
+              maxWidth: "72rem",
+              maxHeight: "90vh",
+            }}
+            className="overflow-y-auto bg-white border border-gray-200 rounded-xl p-8 z-50 shadow-2xl"
           >
             {/* Header Actions */}
             <div className="absolute top-4 right-4 flex items-center gap-2">
@@ -430,7 +630,7 @@ export function UserProfilePopup({
             </div>
 
             {/* Loading State */}
-            {!userData ? (
+            {!profileData ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
                 <p className="ml-3 text-gray-600">Loading profile...</p>
@@ -444,16 +644,17 @@ export function UserProfilePopup({
                     <>
                       <div className="text-center mb-4">
                         <div className="relative w-24 h-24 mx-auto mb-4">
-                          {userData.avatar_url ? (
+                          {profileData?.avatar_url ? (
                             <img
-                              src={userData.avatar_url}
-                              alt={userData.full_name || "User"}
+                              src={profileData.avatar_url}
+                              alt={profileData.full_name || "User"}
                               className="w-full h-full rounded-full object-cover border-4 border-gray-200"
                             />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-br from-blue-400 to-purple-400 flex items-center justify-center border-4 border-blue-200">
                               <span className="text-3xl font-medium text-white">
-                                {(userData.full_name || "U")[0].toUpperCase()}
+                                {(profileData?.full_name ||
+                                  "U")[0].toUpperCase()}
                               </span>
                             </div>
                           )}
@@ -490,11 +691,11 @@ export function UserProfilePopup({
                                 })
                               }
                               className="text-xl font-bold text-gray-900 bg-white border border-gray-300 px-2 py-1 rounded text-center focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                              placeholder={userData.full_name}
+                              placeholder={profileData?.full_name || "User"}
                             />
                           ) : (
                             <h2 className="text-xl font-bold text-gray-900">
-                              {userData.full_name}
+                              {profileData?.full_name || "User"}
                             </h2>
                           )}
                           <button
@@ -504,11 +705,41 @@ export function UserProfilePopup({
                             <Edit2 className="h-4 w-4 text-gray-500" />
                           </button>
                         </div>
-                        <div className="flex items-center justify-center gap-2 mb-4">
+                        <div className="flex items-center justify-center gap-2 mb-4 flex-wrap">
                           <span className="px-2 py-0.5 bg-gradient-to-r from-blue-500 to-purple-500 text-white text-xs font-medium rounded-full">
-                            {userData.user_type.charAt(0).toUpperCase() +
-                              userData.user_type.slice(1)}
+                            {profileData?.user_type === "tutor"
+                              ? "Tutor"
+                              : profileData?.user_type === "mentor"
+                              ? "Mentor"
+                              : profileData?.user_type === "student"
+                              ? "Student"
+                              : profileData?.user_type
+                                  ?.charAt(0)
+                                  .toUpperCase() +
+                                  profileData?.user_type?.slice(1) || "User"}
                           </span>
+                          {/* Professional Title for Mentors/Tutors */}
+                          {(profileData?.user_type === "tutor" ||
+                            profileData?.user_type === "mentor") &&
+                            profileData?.title && (
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded-full border border-blue-200">
+                                {profileData.title}
+                              </span>
+                            )}
+                          {/* Availability for Mentors/Tutors */}
+                          {(profileData?.user_type === "tutor" ||
+                            profileData?.user_type === "mentor") &&
+                            profileData?.availability && (
+                              <span
+                                className={`px-2 py-0.5 text-xs font-medium rounded-full border ${
+                                  profileData.availability === "Available now"
+                                    ? "bg-green-100 text-green-700 border-green-200"
+                                    : "bg-gray-100 text-gray-700 border-gray-200"
+                                }`}
+                              >
+                                {profileData.availability}
+                              </span>
+                            )}
                         </div>
 
                         {/* About Section */}
@@ -525,16 +756,205 @@ export function UserProfilePopup({
                               className="w-full bg-white text-gray-900 px-3 py-2 rounded text-sm border border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                               rows={3}
                               placeholder={
-                                userData.bio || "Add your bio here..."
+                                profileData?.bio || "Add your bio here..."
                               }
                             />
                           ) : (
                             <p className="text-gray-600 text-sm leading-relaxed italic">
-                              {userData.bio || "No bio provided"}
+                              {profileData?.bio || "No bio provided"}
                             </p>
                           )}
                         </div>
                       </div>
+
+                      {/* Mentor/Tutor Specific Fields */}
+                      {(profileData?.user_type === "tutor" ||
+                        profileData?.user_type === "mentor") && (
+                        <div className="mb-6 space-y-3">
+                          {/* Hourly Rate */}
+                          {profileData?.hourly_rate !== undefined &&
+                            profileData?.hourly_rate !== null && (
+                              <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-4 border border-green-200">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex-1">
+                                    <h3 className="text-xs font-semibold text-gray-700 mb-1">
+                                      Hourly Rate
+                                    </h3>
+                                    {isEditing ? (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-lg font-bold text-green-700">
+                                          $
+                                        </span>
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={formData.hourly_rate}
+                                          onChange={(e) =>
+                                            setFormData({
+                                              ...formData,
+                                              hourly_rate:
+                                                parseFloat(e.target.value) || 0,
+                                            })
+                                          }
+                                          className="text-2xl font-bold text-green-700 bg-white border border-green-300 rounded px-2 py-1 w-32 focus:border-green-500 focus:ring-1 focus:ring-green-500"
+                                          placeholder="0.00"
+                                        />
+                                      </div>
+                                    ) : (
+                                      <p className="text-2xl font-bold text-green-700">
+                                        $
+                                        {parseFloat(
+                                          profileData.hourly_rate.toString()
+                                        ).toFixed(2)}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <DollarSign className="w-8 h-8 text-green-500" />
+                                </div>
+                              </div>
+                            )}
+
+                          {/* Experience */}
+                          {profileData?.experience !== undefined &&
+                            profileData?.experience !== null && (
+                              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                <div className="flex items-center gap-2">
+                                  <ClockIcon
+                                    size={14}
+                                    className="text-indigo-500"
+                                  />
+                                  <h3 className="text-xs font-medium text-gray-700">
+                                    Years of Experience
+                                  </h3>
+                                </div>
+                                {isEditing ? (
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={formData.experience}
+                                    onChange={(e) =>
+                                      setFormData({
+                                        ...formData,
+                                        experience: e.target.value,
+                                      })
+                                    }
+                                    className="w-full bg-white text-gray-900 px-2 py-1 rounded mt-1 text-xs border border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                    placeholder="Enter years of experience"
+                                  />
+                                ) : (
+                                  <p className="text-gray-600 text-xs mt-1">
+                                    {profileData.experience} years
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                          {/* Specializations */}
+                          {profileData?.specialization !== undefined &&
+                            profileData?.specialization !== null && (
+                              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Target size={14} className="text-blue-500" />
+                                  <h3 className="text-xs font-medium text-gray-700">
+                                    Specializations
+                                  </h3>
+                                </div>
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    value={formData.specialization}
+                                    onChange={(e) =>
+                                      setFormData({
+                                        ...formData,
+                                        specialization: e.target.value,
+                                      })
+                                    }
+                                    className="w-full bg-white text-gray-900 px-2 py-1 rounded mt-1 text-xs border border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                    placeholder="e.g., Python, React, AWS (comma-separated)"
+                                  />
+                                ) : (
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {(() => {
+                                      const specializations = Array.isArray(
+                                        profileData.specialization
+                                      )
+                                        ? profileData.specialization
+                                        : typeof profileData.specialization ===
+                                          "string"
+                                        ? (() => {
+                                            try {
+                                              return (
+                                                JSON.parse(
+                                                  profileData.specialization.replace(
+                                                    /'/g,
+                                                    '"'
+                                                  )
+                                                ) || []
+                                              );
+                                            } catch {
+                                              // If JSON parse fails, try splitting by comma
+                                              return profileData.specialization
+                                                .replace(/[\[\]"]/g, "")
+                                                .split(",")
+                                                .map((s: string) => s.trim())
+                                                .filter(Boolean);
+                                            }
+                                          })()
+                                        : [];
+                                      return specializations.length > 0 ? (
+                                        specializations.map(
+                                          (spec: string, idx: number) => (
+                                            <span
+                                              key={idx}
+                                              className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded border border-blue-200"
+                                            >
+                                              {spec}
+                                            </span>
+                                          )
+                                        )
+                                      ) : (
+                                        <span className="text-gray-500 text-xs">
+                                          No specializations specified
+                                        </span>
+                                      );
+                                    })()}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                          {/* Qualifications */}
+                          {profileData?.qualifications && (
+                            <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                              <div className="flex items-center gap-2">
+                                <BookOpen
+                                  size={14}
+                                  className="text-purple-500"
+                                />
+                                <h3 className="text-xs font-medium text-gray-700">
+                                  Qualifications
+                                </h3>
+                              </div>
+                              {typeof profileData.qualifications === "string" &&
+                              profileData.qualifications.startsWith("http") ? (
+                                <a
+                                  href={profileData.qualifications}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 text-xs hover:underline mt-1 block"
+                                >
+                                  View Qualifications Document
+                                </a>
+                              ) : (
+                                <p className="text-gray-600 text-xs mt-1">
+                                  {profileData.qualifications}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* User Details Grid */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
@@ -549,7 +969,7 @@ export function UserProfilePopup({
                               </h3>
                             </div>
                             <p className="text-gray-600 text-xs mt-1">
-                              {userData.email}
+                              {profileData?.email}
                             </p>
                           </div>
 
@@ -576,7 +996,7 @@ export function UserProfilePopup({
                               />
                             ) : (
                               <p className="text-gray-600 text-xs mt-1">
-                                {userData.phone_number || "Not provided"}
+                                {profileData?.phone_number || "Not provided"}
                               </p>
                             )}
                           </div>
@@ -604,7 +1024,7 @@ export function UserProfilePopup({
                               />
                             ) : (
                               <p className="text-gray-600 text-xs mt-1">
-                                {userData.country || "Not provided"}
+                                {profileData?.country || "Not provided"}
                               </p>
                             )}
                           </div>
@@ -632,13 +1052,13 @@ export function UserProfilePopup({
                               />
                             ) : (
                               <p className="text-gray-600 text-xs mt-1">
-                                {userData.city || "Not provided"}
+                                {profileData?.city || "Not provided"}
                               </p>
                             )}
                           </div>
 
                           {/* Gender */}
-                          {userData.gender && (
+                          {profileData?.gender && (
                             <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                               <div className="flex items-center gap-2">
                                 <User size={14} className="text-pink-500" />
@@ -647,13 +1067,13 @@ export function UserProfilePopup({
                                 </h3>
                               </div>
                               <p className="text-gray-600 text-xs mt-1">
-                                {userData.gender}
+                                {profileData?.gender}
                               </p>
                             </div>
                           )}
 
                           {/* Date of Birth */}
-                          {userData.date_of_birth && (
+                          {profileData?.date_of_birth && (
                             <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                               <div className="flex items-center gap-2">
                                 <Calendar
@@ -665,7 +1085,7 @@ export function UserProfilePopup({
                                 </h3>
                               </div>
                               <p className="text-gray-600 text-xs mt-1">
-                                {formatDate(userData.date_of_birth)}
+                                {formatDate(profileData?.date_of_birth)}
                               </p>
                             </div>
                           )}
@@ -699,7 +1119,7 @@ export function UserProfilePopup({
                               </select>
                             ) : (
                               <p className="text-gray-600 text-xs mt-1 capitalize">
-                                {userData.current_level || "Not specified"}
+                                {profileData?.current_level || "Not specified"}
                               </p>
                             )}
                           </div>
@@ -713,7 +1133,7 @@ export function UserProfilePopup({
                               </h3>
                             </div>
                             <p className="text-gray-600 text-xs mt-1">
-                              {formatDate(userData.created_at)}
+                              {formatDate(profileData?.created_at)}
                             </p>
                           </div>
                         </div>
@@ -740,23 +1160,23 @@ export function UserProfilePopup({
                                 }
                                 className="w-full bg-white text-gray-900 px-2 py-1 rounded mt-1 text-xs border border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                                 placeholder={
-                                  userData.website || "Add your website..."
+                                  profileData?.website || "Add your website..."
                                 }
                               />
                             ) : (
                               <a
-                                href={userData.website || "#"}
+                                href={profileData?.website || "#"}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-blue-600 text-xs hover:underline mt-1 block"
                               >
-                                {userData.website || "Not provided"}
+                                {profileData?.website || "Not provided"}
                               </a>
                             )}
                           </div>
 
                           {/* Native Language */}
-                          {userData.native_language && (
+                          {profileData?.native_language && (
                             <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                               <div className="flex items-center gap-2">
                                 <Languages
@@ -768,7 +1188,7 @@ export function UserProfilePopup({
                                 </h3>
                               </div>
                               <p className="text-gray-600 text-xs mt-1">
-                                {userData.native_language}
+                                {profileData?.native_language}
                               </p>
                             </div>
                           )}
@@ -796,11 +1216,11 @@ export function UserProfilePopup({
                               />
                             ) : (
                               <p className="text-gray-600 text-xs mt-1">
-                                {Array.isArray(userData.languages_spoken)
-                                  ? userData.languages_spoken.join(", ")
-                                  : typeof userData.languages_spoken ===
+                                {Array.isArray(profileData?.languages_spoken)
+                                  ? profileData?.languages_spoken.join(", ")
+                                  : typeof profileData?.languages_spoken ===
                                     "string"
-                                  ? userData.languages_spoken.replace(
+                                  ? profileData?.languages_spoken.replace(
                                       /[\[\]"]/g,
                                       ""
                                     ) || "Not specified"
@@ -832,10 +1252,10 @@ export function UserProfilePopup({
                               />
                             ) : (
                               <p className="text-gray-600 text-xs mt-1">
-                                {Array.isArray(userData.interests)
-                                  ? userData.interests.join(", ")
-                                  : typeof userData.interests === "string"
-                                  ? userData.interests.replace(
+                                {Array.isArray(profileData?.interests)
+                                  ? profileData?.interests.join(", ")
+                                  : typeof profileData?.interests === "string"
+                                  ? profileData?.interests.replace(
                                       /[\[\]"]/g,
                                       ""
                                     ) || "Not specified"
@@ -845,7 +1265,7 @@ export function UserProfilePopup({
                           </div>
 
                           {/* Learning Goals */}
-                          {userData.learning_goals && (
+                          {profileData?.learning_goals && (
                             <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                               <div className="flex items-center gap-2">
                                 <Target size={14} className="text-amber-500" />
@@ -854,13 +1274,13 @@ export function UserProfilePopup({
                                 </h3>
                               </div>
                               <p className="text-gray-600 text-xs mt-1">
-                                {userData.learning_goals}
+                                {profileData?.learning_goals}
                               </p>
                             </div>
                           )}
 
                           {/* Preferred Learning Style */}
-                          {userData.preferred_learning_style && (
+                          {profileData?.preferred_learning_style && (
                             <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                               <div className="flex items-center gap-2">
                                 <BookOpen
@@ -872,13 +1292,13 @@ export function UserProfilePopup({
                                 </h3>
                               </div>
                               <p className="text-gray-600 text-xs mt-1">
-                                {userData.preferred_learning_style}
+                                {profileData?.preferred_learning_style}
                               </p>
                             </div>
                           )}
 
                           {/* Budget Range */}
-                          {userData.budget_range && (
+                          {profileData?.budget_range && (
                             <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                               <div className="flex items-center gap-2">
                                 <DollarSign
@@ -890,13 +1310,13 @@ export function UserProfilePopup({
                                 </h3>
                               </div>
                               <p className="text-gray-600 text-xs mt-1">
-                                {userData.budget_range}
+                                {profileData?.budget_range}
                               </p>
                             </div>
                           )}
 
                           {/* Availability Hours */}
-                          {userData.availability_hours && (
+                          {profileData?.availability_hours && (
                             <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                               <div className="flex items-center gap-2">
                                 <ClockIcon size={14} className="text-sky-500" />
@@ -905,13 +1325,13 @@ export function UserProfilePopup({
                                 </h3>
                               </div>
                               <p className="text-gray-600 text-xs mt-1">
-                                {userData.availability_hours}
+                                {profileData?.availability_hours}
                               </p>
                             </div>
                           )}
 
                           {/* Status */}
-                          {userData.status && (
+                          {profileData?.status && (
                             <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                               <div className="flex items-center gap-2">
                                 <CheckCircle
@@ -923,7 +1343,7 @@ export function UserProfilePopup({
                                 </h3>
                               </div>
                               <p className="text-gray-600 text-xs mt-1 capitalize">
-                                {userData.status}
+                                {profileData?.status}
                               </p>
                             </div>
                           )}
@@ -937,7 +1357,7 @@ export function UserProfilePopup({
                               </h3>
                             </div>
                             <p className="text-gray-600 text-xs mt-1">
-                              {formatDate(userData.updated_at)}
+                              {formatDate(profileData?.updated_at)}
                             </p>
                           </div>
                         </div>
@@ -970,12 +1390,12 @@ export function UserProfilePopup({
       )}
 
       {/* Verification Popup */}
-      {userData && (
+      {profileData && (
         <VerificationPopup
           isOpen={isVerificationOpen}
           onClose={() => setIsVerificationOpen(false)}
           onSubmit={handleVerificationSubmit}
-          userId={userData.id}
+          userId={profileData?.id || ""}
         />
       )}
 

@@ -36,19 +36,19 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
 
       if (authError) throw authError
 
-      // First check if user is a mentor
+      // First check if user is a mentor/tutor
       const { data: mentorData, error: mentorError } = await supabase
         .from('mentors')
         .select('id, email')
         .eq('id', authData.user?.id)
-        .single()
+        .maybeSingle()
 
-      // If user is a mentor, redirect to tutor dashboard
-      if (!mentorError && mentorData) {
-        console.log('User is a mentor, redirecting to tutor dashboard')
-        router.push('/dashboard/tutor')
+      // If user is a mentor/tutor, redirect to tutor dashboard
+      if (mentorData && !mentorError) {
+        console.log('User is a mentor/tutor, redirecting to tutor dashboard')
+        onClose()
         setTimeout(() => {
-          onClose()
+          window.location.href = '/dashboard'
         }, 100)
         return
       }
@@ -58,18 +58,27 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
         .from('students')
         .select('id')
         .eq('id', authData.user?.id)
-        .single()
+        .maybeSingle()
 
-      if (studentError && !studentData) {
-        console.warn('User not found in mentors or students table, defaulting to student')
+      if (studentError || !studentData) {
+        console.warn('User not found in mentors or students table, checking user metadata...')
+        // Check user metadata for user_type
+          const userType = authData.user?.user_metadata?.user_type
+          if (userType === 'tutor' || userType === 'mentor') {
+            console.log('User type from metadata is tutor/mentor, redirecting to company dashboard')
+            onClose()
+            setTimeout(() => {
+              window.location.href = '/dashboard'
+            }, 100)
+            return
+          }
       }
 
-      // Redirect to student dashboard
-      await redirectBasedOnUserType('student', authData.user?.id)
-
-      // Wait a bit before closing to ensure redirect happens
+      // Redirect to learner dashboard
+      console.log('Redirecting to learner dashboard')
+      onClose()
       setTimeout(() => {
-        onClose()
+        window.location.href = '/dashboard/learner'
       }, 100)
     } catch (error: any) {
       setError(error.message || "An error occurred during sign in")
@@ -116,15 +125,14 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
         .from('mentors')
         .select('id')
         .eq('id', data.user.id)
-        .single()
+        .maybeSingle()
 
-      // If not found in mentors, check students table
-      // First check if user is a mentor
-      if (!mentorError && mentorData) {
-        console.log('User is a mentor, redirecting to tutor dashboard')
-        router.push('/dashboard/tutor')
+      // If user is a mentor/tutor, redirect to company dashboard
+      if (mentorData && !mentorError) {
+        console.log('User is a mentor/tutor, redirecting to company dashboard')
+        onClose()
         setTimeout(() => {
-          onClose()
+          window.location.href = '/dashboard'
         }, 100)
         return
       }
@@ -134,16 +142,28 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
         .from('students')
         .select('id')
         .eq('id', data.user.id)
-        .single()
+        .maybeSingle()
 
-      if (studentError && !studentData) {
-        console.warn('User not found in mentors or students table, defaulting to student')
+      if (studentError || !studentData) {
+        console.warn('User not found in mentors or students table, checking user metadata...')
+          // Check user metadata for user_type
+          const userType = data.user.user_metadata?.user_type
+          if (userType === 'tutor' || userType === 'mentor') {
+            console.log('User type from metadata is tutor/mentor, redirecting to company dashboard')
+            onClose()
+            setTimeout(() => {
+              window.location.href = '/dashboard'
+            }, 100)
+            return
+          }
       }
 
-      console.log('Redirecting user to student dashboard')
-
-      // Redirect to student dashboard
-      await redirectBasedOnUserType('student', data.user.id)
+      // Redirect to learner dashboard
+      console.log('Redirecting to learner dashboard')
+      onClose()
+      setTimeout(() => {
+        window.location.href = '/dashboard/learner'
+      }, 100)
 
       // Wait a bit before closing to ensure redirect happens
       setTimeout(() => {
@@ -176,8 +196,8 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
 
     // Use window.location for a hard redirect to ensure it happens
     if (mappedType === 'mentor' || mappedType === 'tutor') {
-      console.log('Redirecting to tutor dashboard')
-      window.location.href = '/dashboard/tutor'
+      console.log('Redirecting to company dashboard')
+      window.location.href = '/dashboard'
     } else {
       console.log('Redirecting to learner dashboard')
       window.location.href = '/dashboard/learner'

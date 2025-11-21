@@ -18,7 +18,8 @@ import {
   Navigation,
   Video,
   ExternalLink,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  DollarSign
 } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard/layout"
 import { supabase } from '@/lib/supabase'
@@ -28,6 +29,7 @@ import { BookingModal } from "@/components/mentors/booking-modal"
 import { ProfilePictureModal } from "@/components/mentors/profile-picture-modal"
 import { StudentProfileCompletionForm } from "@/components/dashboard/student-profile-completion-form"
 import { GlobeViewer } from "@/components/mentors/globe-viewer"
+import { convertAndFormatPrice } from '@/lib/currency'
 
 const stats = [
   {
@@ -141,9 +143,12 @@ export default function LearnerDashboard() {
   const [userLocation, setUserLocation] = React.useState<{ lat: number; lng: number } | null>(null)
   const [isFindingLocation, setIsFindingLocation] = React.useState(false)
   const [bookedSessions, setBookedSessions] = React.useState<BookedSession[]>([])
+  const [convertedAmounts, setConvertedAmounts] = React.useState<Record<string, string>>({})
+  const [convertedHourlyRates, setConvertedHourlyRates] = React.useState<Record<number, string>>({})
   const [sessionsLoading, setSessionsLoading] = React.useState(false)
   const router = useRouter()
 
+  // Optimized: Fetch user data and sessions in parallel, mentors only when needed
   React.useEffect(() => {
     const fetchUserData = async () => {
       try {
@@ -153,85 +158,84 @@ export default function LearnerDashboard() {
           return
         }
 
-        // First check if user is a mentor
-        const { data: mentorData, error: mentorError } = await supabase
-          .from('mentors')
-          .select('id, email')
-          .eq('id', user.id)
-          .single()
+        // Parallel check for mentor and student
+        const [mentorResult, studentResult] = await Promise.all([
+          supabase.from('mentors').select('id, email').eq('id', user.id).maybeSingle(),
+          supabase.from('students').select('*').eq('id', user.id).maybeSingle()
+        ])
 
-        if (!mentorError && mentorData) {
-          // User is a mentor, redirect to tutor dashboard
-          console.log('User is a mentor, redirecting to tutor dashboard')
-          router.push('/dashboard/tutor')
+        // If user is a mentor/tutor, redirect to company dashboard
+        if (mentorResult.data && !mentorResult.error) {
+          console.log('User is a mentor/tutor, redirecting to company dashboard')
+          router.push('/dashboard')
           return
         }
 
-        // Check if user is in students table
-        const { data: studentData, error: studentError } = await supabase
-          .from('students')
-          .select('*')
-          .eq('id', user.id)
-          .single()
+        // Also check user metadata as fallback
+        const userType = user.user_metadata?.user_type
+        if (userType === 'tutor' || userType === 'mentor') {
+          console.log('User type from metadata is tutor/mentor, redirecting to company dashboard')
+          router.push('/dashboard')
+          return
+        }
 
-        if (studentError) {
-          console.log('Student not found, creating student record...', studentError)
+        // Only create student record if user is NOT a mentor and doesn't exist in students table
+        if (studentResult.error && !mentorResult.data) {
+          // Double-check user metadata to ensure they're not a mentor
+          const userType = user.user_metadata?.user_type
+          if (userType !== 'tutor' && userType !== 'mentor') {
+            // Create student record
+            const { data: newStudent, error: createError } = await supabase
+              .from('students')
+              .insert({
+                id: user.id,
+                email: user.email || '',
+                full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
+                avatar_url: user.user_metadata?.avatar_url || null,
+                bio: null,
+                website: null,
+                phone_number: null,
+                date_of_birth: null,
+                gender: null,
+                country: null,
+                city: null,
+                timezone: null,
+                native_language: null,
+                languages_spoken: '[]',
+                current_level: 'beginner',
+                interests: '[]',
+                learning_goals: null,
+                preferred_learning_style: null,
+                availability_hours: null,
+                budget_range: null,
+                social_links: '{}',
+                settings: '{}',
+                verified: user.email_confirmed_at ? true : false,
+                status: 'active',
+                is_complete: false,
+                role: 'student',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              })
+              .select()
+              .single()
 
-          // User not found in either table, create student record
-          console.log('User not found in students or mentors, creating student record...')
-          const { data: newStudent, error: createError } = await supabase
-            .from('students')
-            .insert({
-              id: user.id,
-              email: user.email || '',
-              full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-              avatar_url: user.user_metadata?.avatar_url || null,
-              bio: null,
-              website: null,
-              phone_number: null,
-              date_of_birth: null,
-              gender: null,
-              country: null,
-              city: null,
-              timezone: null,
-              native_language: null,
-              languages_spoken: '[]',
-              current_level: 'beginner',
-              interests: '[]',
-              learning_goals: null,
-              preferred_learning_style: null,
-              availability_hours: null,
-              budget_range: null,
-              social_links: '{}',
-              settings: '{}',
-              verified: user.email_confirmed_at ? true : false,
-              status: 'active',
-              is_complete: false,
-              role: 'student',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            })
-            .select()
-            .single()
-
-          if (createError) {
-            console.error('Error creating student record:', createError)
-            setUserData({
-              id: user.id,
-              email: user.email || '',
-              full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-            })
-          } else {
-            setUserData(newStudent)
-            // Show profile completion form if profile is incomplete
-            if (newStudent && newStudent.is_complete === false) {
-              setIsProfileCompletionOpen(true)
+            if (createError) {
+              setUserData({
+                id: user.id,
+                email: user.email || '',
+                full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
+              })
+            } else {
+              setUserData(newStudent)
+              if (newStudent && newStudent.is_complete === false) {
+                setIsProfileCompletionOpen(true)
+              }
             }
           }
-        } else {
-          setUserData(studentData)
-          // Check if profile is complete
-          if (studentData && studentData.is_complete === false) {
+        } else if (studentResult.data) {
+          setUserData(studentResult.data)
+          if (studentResult.data && studentResult.data.is_complete === false) {
             setIsProfileCompletionOpen(true)
           }
         }
@@ -245,7 +249,7 @@ export default function LearnerDashboard() {
             full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
           })
         } else {
-        router.push('/')
+          router.push('/')
         }
       } finally {
         setLoading(false)
@@ -255,8 +259,40 @@ export default function LearnerDashboard() {
     fetchUserData()
   }, [router])
 
-  // Fetch mentors from API
+  // Auto-detect user location on page load for currency conversion
   React.useEffect(() => {
+    if (!userLocation && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          })
+        },
+        (error) => {
+          console.error("Error getting location for currency conversion:", error)
+          // Try to get location from user's country in their profile
+          if (userData?.country) {
+            // We can use a default location for the country, but for now just log
+            console.log("User country:", userData.country)
+          }
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: 5000,
+          maximumAge: 3600000 // Cache for 1 hour
+        }
+      )
+    }
+  }, [userLocation, userData?.country])
+
+  // Lazy load mentors - only fetch when overview tab is active or when needed
+  React.useEffect(() => {
+    // Only fetch mentors if we're on overview tab or when explicitly needed
+    if (activeTab !== 'overview' && !isGlobalMentorSearchOpen) {
+      return
+    }
+
     const fetchMentors = async () => {
       try {
         setMentorsLoading(true)
@@ -274,17 +310,44 @@ export default function LearnerDashboard() {
         const data = await response.json()
 
         if (data.success && data.mentors) {
-          // Show all mentors in the overview tab
-          // Ensure latitude and longitude are numbers
-          const processedMentors = data.mentors.map((mentor: any) => ({
-            ...mentor,
-            latitude: mentor.latitude ? Number(mentor.latitude) : undefined,
-            longitude: mentor.longitude ? Number(mentor.longitude) : undefined,
-          }))
-          console.log('Fetched mentors:', processedMentors.length, 'mentors with location:', processedMentors.filter((m: any) => m.latitude && m.longitude).length)
+          // Process mentors more efficiently
+          const processedMentors = data.mentors.map((mentor: any) => {
+            // Parse specialization from JSON string if needed
+            let specialization = mentor.specialization || []
+            if (typeof specialization === 'string') {
+              try {
+                specialization = JSON.parse(specialization)
+              } catch {
+                specialization = []
+              }
+            }
+            if (!Array.isArray(specialization)) {
+              specialization = []
+            }
+
+            // Parse languages from JSON string if needed
+            let languages = mentor.languages || []
+            if (typeof languages === 'string') {
+              try {
+                languages = JSON.parse(languages)
+              } catch {
+                languages = []
+              }
+            }
+            if (!Array.isArray(languages)) {
+              languages = []
+            }
+
+            return {
+              ...mentor,
+              latitude: mentor.latitude ? Number(mentor.latitude) : undefined,
+              longitude: mentor.longitude ? Number(mentor.longitude) : undefined,
+              specialization,
+              languages,
+            }
+          })
           setMentors(processedMentors)
         } else {
-          console.error('Failed to fetch mentors:', data.message)
           setMentors([])
         }
       } catch (error) {
@@ -296,17 +359,29 @@ export default function LearnerDashboard() {
     }
 
     fetchMentors()
-  }, [])
+  }, [activeTab, isGlobalMentorSearchOpen])
 
-  // Fetch booked sessions for the current user
+  // Fetch booked sessions AND all available sessions - only when needed (sessions tab or overview)
   React.useEffect(() => {
     const fetchBookedSessions = async () => {
-      if (!userData?.email) return
+      if (!userData?.email) {
+        console.log('No user email, skipping session fetch')
+        return
+      }
+      // Only fetch if we're on sessions tab or overview tab
+      if (activeTab !== 'sessions' && activeTab !== 'overview') {
+        console.log('Not on sessions/overview tab, skipping fetch. Active tab:', activeTab)
+        return
+      }
 
+      console.log('Starting to fetch sessions for user:', userData.email, 'Active tab:', activeTab)
       try {
         setSessionsLoading(true)
-        // Fetch sessions from Supabase where learner_email matches current user's email
-        const { data: sessionsData, error: sessionsError } = await supabase
+        // Optimized query - limit to recent sessions for overview, all for sessions tab
+        const limit = activeTab === 'overview' ? 5 : 100
+        
+        // Fetch sessions booked by this student
+        const { data: bookedSessionsData, error: bookedSessionsError } = await supabase
           .from('sessions')
           .select(`
             *,
@@ -314,40 +389,214 @@ export default function LearnerDashboard() {
               id,
               name,
               avatar,
-              title
+              title,
+              description,
+              specialization,
+              rating,
+              total_reviews,
+              hourly_rate,
+              experience,
+              languages,
+              availability,
+              country,
+              is_verified,
+              email,
+              phone_number,
+              qualifications,
+              linkedin_profile,
+              github_profile,
+              twitter_profile,
+              facebook_profile,
+              instagram_profile,
+              personal_website
+            ),
+            payments (
+              id,
+              status,
+              payment_intent_id,
+              paid_at
             )
           `)
           .eq('learner_email', userData.email)
           .order('date', { ascending: true })
           .order('time', { ascending: true })
+          .limit(limit)
 
-        if (sessionsError) {
-          console.error('Error fetching sessions:', sessionsError)
-          setBookedSessions([])
-          return
+        // Fetch all upcoming public sessions created by mentors/tutors (available for booking)
+        // Fetch ALL sessions first, then filter client-side to debug
+        const today = new Date().toISOString().split('T')[0]
+        
+        console.log('Fetching public sessions with date >=', today)
+        
+        // Simplified query: fetch all sessions where private is false or null
+        const { data: allSessionsData, error: allSessionsError } = await supabase
+          .from('sessions')
+          .select(`
+            *,
+            mentors (
+              id,
+              name,
+              avatar,
+              title,
+              description,
+              specialization,
+              rating,
+              total_reviews,
+              hourly_rate,
+              experience,
+              languages,
+              availability,
+              country,
+              is_verified,
+              email,
+              phone_number,
+              qualifications,
+              linkedin_profile,
+              github_profile,
+              twitter_profile,
+              facebook_profile,
+              instagram_profile,
+              personal_website
+            ),
+            payments (
+              id,
+              status,
+              payment_intent_id,
+              paid_at
+            )
+          `)
+          .gte('date', today)
+          .eq('status', 'scheduled')
+          .order('date', { ascending: true })
+          .order('time', { ascending: true })
+          .limit(limit * 2) // Get more to filter
+        
+        console.log('All sessions fetched:', allSessionsData?.length || 0, allSessionsData)
+        
+        // Filter client-side: only show public sessions (private = false or null)
+        const availableSessionsData = (allSessionsData || []).filter((session: any) => {
+          const isPublic = session.private === false || session.private === null
+          console.log(`Session ${session.id} (${session.topic}): private=${session.private}, isPublic=${isPublic}`)
+          return isPublic
+        })
+        
+        const availableSessionsError = allSessionsError
+        
+        console.log('Filtered public sessions:', availableSessionsData.length)
+
+        if (bookedSessionsError) {
+          console.error('Error fetching booked sessions:', bookedSessionsError)
+        }
+        if (availableSessionsError) {
+          console.error('Error fetching available sessions:', availableSessionsError)
+          // Don't return early, continue with booked sessions even if available sessions fail
         }
 
-        // Transform the data to include mentor info
-        const transformedSessions: BookedSession[] = (sessionsData || []).map((session: any) => ({
-          id: session.id,
-          mentor_id: session.mentor_id,
-          mentor_name: session.mentors?.name || 'Unknown Mentor',
-          mentor_avatar: session.mentors?.avatar || '/images/user/user-01.jpg',
-          mentor_title: session.mentors?.title || '',
-          learner_name: session.learner_name,
-          learner_email: session.learner_email,
-          date: session.date,
-          time: session.time,
-          duration: session.duration,
-          topic: session.topic,
-          notes: session.notes || '',
-          meeting_type: session.meeting_type,
-          meeting_link: session.meeting_link || '',
-          status: session.status,
-          amount: parseFloat(session.amount) || 0,
-          created_at: session.created_at
-        }))
+        // Combine booked sessions and available public sessions, removing duplicates
+        const allSessions = [...(bookedSessionsData || []), ...(availableSessionsData || [])]
+        const uniqueSessions = Array.from(
+          new Map(allSessions.map(session => [session.id, session])).values()
+        )
+        
+        // Show all sessions (booked by user OR public sessions)
+        // No additional filtering needed since we already filtered in the query
+        const sessionsData = uniqueSessions
 
+        console.log('Sessions data before transformation:', sessionsData.length, sessionsData)
+        
+        // Transform the data efficiently
+        const transformedSessions: BookedSession[] = sessionsData
+          .filter((session: any) => {
+            const hasMentor = !!session.mentors
+            if (!hasMentor) {
+              console.log('Filtering out session without mentor:', session.id, session.topic)
+            }
+            return hasMentor
+          }) // Only include sessions with mentor data
+          .map((session: any) => {
+          // Check if payment exists and is successful
+          const payment = Array.isArray(session.payments) ? session.payments[0] : session.payments
+          const isPaid = payment && (payment.status === 'succeeded' || payment.status === 'completed')
+          
+          // Build full mentor object for details modal
+          const mentorData: Mentor | null = session.mentors ? {
+            id: session.mentors.id,
+            supabase_id: '',
+            name: session.mentors.name || 'Unknown Mentor',
+            title: session.mentors.title || '',
+            description: session.mentors.description || '',
+            specialization: Array.isArray(session.mentors.specialization) 
+              ? session.mentors.specialization 
+              : typeof session.mentors.specialization === 'string'
+                ? JSON.parse(session.mentors.specialization || '[]')
+                : [],
+            rating: session.mentors.rating || 0,
+            total_reviews: session.mentors.total_reviews || 0,
+            hourly_rate: session.mentors.hourly_rate || 0,
+            avatar: session.mentors.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(session.mentors.name || 'User')}&background=3B82F6&color=fff&size=128`,
+            experience: session.mentors.experience?.toString() || '0',
+            languages: Array.isArray(session.mentors.languages)
+              ? session.mentors.languages
+              : typeof session.mentors.languages === 'string'
+                ? JSON.parse(session.mentors.languages || '[]')
+                : [],
+            availability: session.mentors.availability || 'Available now',
+            country: session.mentors.country || '',
+            is_verified: session.mentors.is_verified === true || session.mentors.is_verified === 'true',
+            email: session.mentors.email || '',
+            phone_number: session.mentors.phone_number || '',
+            qualifications: session.mentors.qualifications || '',
+            linkedin_profile: session.mentors.linkedin_profile || '',
+            github_profile: session.mentors.github_profile || '',
+            twitter_profile: session.mentors.twitter_profile || '',
+            facebook_profile: session.mentors.facebook_profile || '',
+            instagram_profile: session.mentors.instagram_profile || '',
+            personal_website: session.mentors.personal_website || '',
+            sessions_conducted: 0
+          } : null
+          
+          return {
+            id: session.id,
+            mentor_id: session.mentor_id,
+            mentor_name: session.mentors?.name || 'Unknown Mentor',
+            mentor_avatar: session.mentors?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(session.mentors?.name || 'User')}&background=3B82F6&color=fff&size=128`,
+            mentor_title: session.mentors?.title || '',
+            mentor_data: mentorData,
+            learner_name: session.learner_name,
+            learner_email: session.learner_email,
+            date: session.date,
+            time: session.time,
+            duration: session.duration,
+            topic: session.topic,
+            notes: session.notes || '',
+            meeting_type: session.meeting_type,
+            meeting_link: session.meeting_link || '',
+            status: session.status,
+            amount: parseFloat(session.amount) || 0,
+            is_paid: isPaid,
+            payment_id: payment?.id || null,
+            created_at: session.created_at
+          }
+        })
+
+        console.log('Fetched sessions:', {
+          booked: bookedSessionsData?.length || 0,
+          available: availableSessionsData?.length || 0,
+          unique: uniqueSessions.length,
+          total: transformedSessions.length,
+          sessions: transformedSessions.map(s => ({ 
+            id: s.id, 
+            topic: s.topic, 
+            learner_email: s.learner_email,
+            mentor_name: s.mentor_name,
+            private: (sessionsData.find((ss: any) => ss.id === s.id) as any)?.private
+          }))
+        })
+        
+        // Debug: Log raw data
+        console.log('Raw available sessions:', availableSessionsData)
+        console.log('Raw booked sessions:', bookedSessionsData)
+        
         setBookedSessions(transformedSessions)
       } catch (error) {
         console.error('Error fetching sessions:', error)
@@ -358,9 +607,78 @@ export default function LearnerDashboard() {
     }
 
     fetchBookedSessions()
-  }, [userData?.email])
+  }, [userData?.email, activeTab])
 
-  const renderStars = (rating: number) => {
+  // Convert all session amounts when sessions or user location changes
+  React.useEffect(() => {
+    const convertAllAmounts = async () => {
+      if (bookedSessions.length === 0) {
+        setConvertedAmounts({})
+        return
+      }
+      
+      const conversions: Record<string, string> = {}
+      
+      for (const session of bookedSessions) {
+        try {
+          // Assume amount in database is in USD
+          const usdAmount = session.amount
+          if (userLocation) {
+            const result = await convertAndFormatPrice(usdAmount, userLocation)
+            conversions[session.id] = result.formatted
+          } else {
+            // No location, use USD
+            conversions[session.id] = `$${usdAmount.toFixed(2)}`
+          }
+        } catch (error) {
+          console.error(`Error converting currency for session ${session.id}:`, error)
+          // Fallback to USD
+          conversions[session.id] = `$${session.amount.toFixed(2)}`
+        }
+      }
+      
+      setConvertedAmounts(conversions)
+    }
+    
+    convertAllAmounts()
+  }, [bookedSessions, userLocation])
+
+  // Convert mentor hourly rates when mentors or user location changes
+  React.useEffect(() => {
+    const convertHourlyRates = async () => {
+      if (mentors.length === 0) {
+        setConvertedHourlyRates({})
+        return
+      }
+      
+      const conversions: Record<number, string> = {}
+      
+      for (const mentor of mentors) {
+        try {
+          // Assume hourly rate in database is in USD
+          const usdRate = mentor.hourly_rate
+          if (userLocation) {
+            const result = await convertAndFormatPrice(usdRate, userLocation)
+            conversions[mentor.id] = result.formatted
+          } else {
+            // No location, use USD
+            conversions[mentor.id] = `$${usdRate.toFixed(2)}`
+          }
+        } catch (error) {
+          console.error(`Error converting hourly rate for mentor ${mentor.id}:`, error)
+          // Fallback to USD
+          conversions[mentor.id] = `$${mentor.hourly_rate.toFixed(2)}`
+        }
+      }
+      
+      setConvertedHourlyRates(conversions)
+    }
+    
+    convertHourlyRates()
+  }, [mentors, userLocation])
+
+  // Memoize renderStars to avoid recreating on every render
+  const renderStars = React.useCallback((rating: number) => {
     const stars = []
     const fullStars = Math.floor(rating)
     const hasHalfStar = rating % 1 !== 0
@@ -385,7 +703,7 @@ export default function LearnerDashboard() {
     }
 
     return stars
-  }
+  }, [])
 
   // Logo colors for the circle background
   const circleColors = {
@@ -403,7 +721,8 @@ export default function LearnerDashboard() {
     achievements: "#3B82F6" // Light Blue
   }
 
-  const getTabContent = () => {
+  // Memoize tab content to avoid recalculation
+  const content = React.useMemo(() => {
     switch (activeTab) {
       case 'sessions':
         return {
@@ -442,7 +761,7 @@ export default function LearnerDashboard() {
           share: progressData.current.ofTotal
         }
     }
-  }
+  }, [activeTab])
 
   if (loading) {
     return (
@@ -454,8 +773,6 @@ export default function LearnerDashboard() {
       </div>
     )
   }
-
-  const content = getTabContent()
 
   return (
     <DashboardLayout role="learner">
@@ -664,12 +981,12 @@ export default function LearnerDashboard() {
                               className="cursor-pointer hover:opacity-80 transition-opacity"
                             >
                               <img
-                                src={mentor.avatar || '/images/user/user-01.jpg'}
+                                src={mentor.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(mentor.name)}&background=3B82F6&color=fff&size=128`}
                                 alt={mentor.name}
                                 className="w-14 h-14 rounded-full object-cover border-2 border-blue-200 hover:border-blue-400 transition-colors"
                                 onError={(e) => {
                                   const target = e.target as HTMLImageElement
-                                  target.src = '/images/user/user-01.jpg'
+                                  target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(mentor.name)}&background=3B82F6&color=fff&size=128`
                                 }}
                               />
                             </button>
@@ -694,7 +1011,7 @@ export default function LearnerDashboard() {
                         </div>
                         <div className="text-right">
                           <div className="text-lg font-bold text-blue-600">
-                            ${mentor.hourly_rate}
+                            {convertedHourlyRates[mentor.id] || `$${mentor.hourly_rate.toFixed(2)}`}
                           </div>
                           <div className="text-xs text-gray-500">
                             /hour
@@ -707,12 +1024,6 @@ export default function LearnerDashboard() {
                         <div className="flex items-center gap-1">
                           {renderStars(mentor.rating)}
                         </div>
-                        <span className="text-sm font-medium text-gray-700">
-                          {mentor.rating}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          ({mentor.total_reviews})
-                        </span>
                       </div>
 
                       {/* Description/About */}
@@ -723,21 +1034,37 @@ export default function LearnerDashboard() {
                       )}
 
                       {/* Specializations */}
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {mentor.specialization?.slice(0, 3).map((skill, idx) => (
-                          <span
-                            key={idx}
-                            className="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 rounded-full"
-                          >
-                            {skill}
-                          </span>
-                        ))}
-                        {mentor.specialization?.length > 3 && (
-                          <span className="px-2 py-1 text-xs text-gray-500">
-                            +{mentor.specialization.length - 3}
-                          </span>
-                        )}
-                      </div>
+                      {(() => {
+                        // Parse specialization from JSON string if needed
+                        let specializations: string[] = []
+                        if (Array.isArray(mentor.specialization)) {
+                          specializations = mentor.specialization
+                        } else if (typeof mentor.specialization === 'string') {
+                          try {
+                            specializations = JSON.parse(mentor.specialization || '[]')
+                          } catch {
+                            specializations = []
+                          }
+                        }
+                        
+                        return specializations.length > 0 ? (
+                          <div className="flex flex-wrap gap-2 mb-4">
+                            {specializations.slice(0, 3).map((skill, idx) => (
+                              <span
+                                key={idx}
+                                className="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 rounded-full"
+                              >
+                                {skill}
+                              </span>
+                            ))}
+                            {specializations.length > 3 && (
+                              <span className="px-2 py-1 text-xs text-gray-500">
+                                +{specializations.length - 3}
+                              </span>
+                            )}
+                          </div>
+                        ) : null
+                      })()}
 
                       {/* Action Buttons */}
                       <div className="mt-auto pt-4 border-t border-gray-200">
@@ -805,98 +1132,368 @@ export default function LearnerDashboard() {
                   {bookedSessions.map((session) => {
                     const sessionDate = new Date(session.date)
                     const sessionDateTime = new Date(`${session.date}T${session.time}`)
-                    const isUpcoming = sessionDateTime > new Date()
-                    const isPast = sessionDateTime < new Date()
+                    const meetingEndTime = new Date(sessionDateTime.getTime() + (session.duration * 60000))
+                    const now = new Date()
+                    const isUpcoming = sessionDateTime > now
+                    const isPast = sessionDateTime < now
+                    const isMeetingActive = now >= sessionDateTime && now <= meetingEndTime
+                    const isEnded = now > meetingEndTime
+                    const isMySession = session.learner_email === userData?.email
+                    const isAvailableSession = !isMySession && (session.learner_name === 'TBD' || session.learner_email === 'tbd@example.com')
+                    
+                    // Determine display status based on time
+                    let displayStatus = session.status
+                    let displayStatusLabel = session.status.charAt(0).toUpperCase() + session.status.slice(1).replace('-', ' ')
+                    
+                    if (isMeetingActive && session.status === 'scheduled') {
+                      displayStatus = 'in-progress'
+                      displayStatusLabel = 'Ongoing'
+                    } else if (isEnded && (session.status === 'scheduled' || session.status === 'in-progress')) {
+                      displayStatus = 'completed'
+                      displayStatusLabel = 'Ended'
+                    }
+                    
                     const statusColors: Record<string, string> = {
                       scheduled: 'bg-blue-100 text-blue-700 border-blue-200',
                       completed: 'bg-green-100 text-green-700 border-green-200',
                       cancelled: 'bg-red-100 text-red-700 border-red-200',
-                      'in-progress': 'bg-yellow-100 text-yellow-700 border-yellow-200'
+                      'in-progress': 'bg-yellow-100 text-yellow-700 border-yellow-200',
+                      'ongoing': 'bg-yellow-100 text-yellow-700 border-yellow-200',
+                      'ended': 'bg-gray-100 text-gray-700 border-gray-200'
                     }
-
+                    
+                    const cardBgClass = isUpcoming && isAvailableSession 
+                      ? 'bg-gradient-to-br from-blue-50 via-white to-blue-50 border-2 border-blue-200 hover:!border-green-400' 
+                      : 'bg-white border border-gray-200 hover:!border-green-400 hover:!border-2'
+                    
                     return (
                       <motion.div
                         key={session.id}
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow"
+                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{ 
+                          duration: 0.4,
+                          delay: bookedSessions.indexOf(session) * 0.05,
+                          ease: [0.4, 0, 0.2, 1]
+                        }}
+                        whileHover={{ 
+                          transition: { duration: 0.2 }
+                        }}
+                        className={`${cardBgClass} rounded-xl p-6 shadow-sm hover:shadow-xl transition-all duration-300 relative overflow-hidden`}
                       >
+                        {/* Blue accent bar for upcoming available sessions */}
+                        {isUpcoming && isAvailableSession && (
+                          <motion.div
+                            initial={{ width: 0 }}
+                            animate={{ width: '100%' }}
+                            transition={{ duration: 0.6, delay: 0.2 }}
+                            className="absolute top-0 left-0 h-1 bg-gradient-to-r from-blue-500 via-blue-400 to-blue-500"
+                          />
+                        )}
+                        
+                        {/* Subtle pulse animation for available sessions */}
+                        {isUpcoming && isAvailableSession && (
+                          <motion.div
+                            animate={{ 
+                              opacity: [0.3, 0.6, 0.3],
+                              scale: [1, 1.05, 1]
+                            }}
+                            transition={{ 
+                              duration: 3,
+                              repeat: Infinity,
+                              ease: "easeInOut"
+                            }}
+                            className="absolute top-2 right-2 w-3 h-3 bg-blue-500 rounded-full"
+                          />
+                        )}
                         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                           {/* Left Section - Session Info */}
                           <div className="flex-1">
                             <div className="flex items-start gap-4 mb-4">
                               {/* Mentor Avatar */}
-                              <div className="relative flex-shrink-0">
-                                <img
-                                  src={session.mentor_avatar || '/images/user/user-01.jpg'}
-                                  alt={session.mentor_name}
-                                  className="w-16 h-16 rounded-full object-cover border-2 border-blue-200"
-                                  onError={(e) => {
-                                    const target = e.target as HTMLImageElement
-                                    target.src = '/images/user/user-01.jpg'
-                                  }}
-                                />
-                                <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-green-500 rounded-full border-2 border-white"></div>
-                              </div>
+                              <motion.div 
+                                className="relative flex-shrink-0"
+                                whileHover={{ scale: 1.1 }}
+                                transition={{ duration: 0.2 }}
+                              >
+                                <div className="relative">
+                                  <img
+                                    src={session.mentor_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(session.mentor_name)}&background=3B82F6&color=fff&size=128`}
+                                    alt={session.mentor_name}
+                                    className={`w-16 h-16 rounded-full object-cover border-2 ${
+                                      isUpcoming && isAvailableSession 
+                                        ? 'border-blue-400 shadow-lg shadow-blue-200' 
+                                        : 'border-blue-200'
+                                    }`}
+                                    onError={(e) => {
+                                      const target = e.target as HTMLImageElement
+                                      target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(session.mentor_name)}&background=3B82F6&color=fff&size=128`
+                                    }}
+                                  />
+                                  {isUpcoming && isAvailableSession && (
+                                    <motion.div
+                                      animate={{ 
+                                        boxShadow: [
+                                          '0 0 0 0 rgba(59, 130, 246, 0.7)',
+                                          '0 0 0 8px rgba(59, 130, 246, 0)',
+                                        ]
+                                      }}
+                                      transition={{ 
+                                        duration: 2,
+                                        repeat: Infinity,
+                                        ease: "easeOut"
+                                      }}
+                                      className="absolute inset-0 rounded-full border-2 border-blue-400"
+                                    />
+                                  )}
+                                  <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
+                                </div>
+                              </motion.div>
 
                               {/* Session Details */}
                               <div className="flex-1">
-                                <div className="flex items-center gap-3 mb-2 flex-wrap">
-                                  <h3 className="text-lg font-semibold text-gray-900">
+                                <div className="flex items-center gap-3 mb-3 flex-wrap">
+                                  <motion.h3 
+                                    className={`text-xl font-bold ${
+                                      isUpcoming && isAvailableSession 
+                                        ? 'text-blue-900' 
+                                        : 'text-gray-900'
+                                    }`}
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.1 }}
+                                  >
                                     {session.topic}
-                                  </h3>
-                                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${statusColors[session.status] || 'bg-gray-100 text-gray-700 border-gray-200'}`}>
-                                    {session.status.charAt(0).toUpperCase() + session.status.slice(1).replace('-', ' ')}
-                                  </span>
+                                  </motion.h3>
+                                  <motion.span 
+                                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border shadow-sm ${
+                                      statusColors[displayStatus] || 'bg-gray-100 text-gray-700 border-gray-200'
+                                    }`}
+                                    initial={{ opacity: 0, scale: 0.8 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    transition={{ delay: 0.15 }}
+                                  >
+                                    {displayStatusLabel}
+                                  </motion.span>
                                 </div>
+                                
+                                {/* Mentor Name */}
+                                <motion.div 
+                                  className="flex items-center gap-2 mb-3"
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  transition={{ delay: 0.2 }}
+                                >
+                                  <Users className={`w-4 h-4 ${
+                                    isUpcoming && isAvailableSession 
+                                      ? 'text-blue-600' 
+                                      : 'text-gray-500'
+                                  }`} />
+                                  <span className={`font-semibold ${
+                                    isUpcoming && isAvailableSession 
+                                      ? 'text-blue-800' 
+                                      : 'text-gray-700'
+                                  }`}>
+                                    {session.mentor_name}
+                                  </span>
+                                  {session.mentor_title && (
+                                    <span className={`text-sm ${
+                                      isUpcoming && isAvailableSession 
+                                        ? 'text-blue-600' 
+                                        : 'text-gray-500'
+                                    }`}>
+                                      • {session.mentor_title}
+                                    </span>
+                                  )}
+                                </motion.div>
 
-                                <div className="space-y-2 text-sm text-gray-600">
-                                  <div className="flex items-center gap-2">
-                                    <Users className="w-4 h-4 text-gray-400" />
-                                    <span className="font-medium">{session.mentor_name}</span>
-                                    {session.mentor_title && (
-                                      <span className="text-gray-500">• {session.mentor_title}</span>
+                                <div className="space-y-3 text-sm">
+                                  {/* Payment Status Badge */}
+                                  <motion.div 
+                                    className="flex items-center gap-2"
+                                    initial={{ opacity: 0, y: -5 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: 0.25 }}
+                                  >
+                                    {session.learner_email === userData?.email ? (
+                                      <span className={`px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm ${session.is_paid ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-orange-100 text-orange-700 border border-orange-300'}`}>
+                                        {session.is_paid ? 'Paid' : 'Awaiting Payment'}
+                                      </span>
+                                    ) : (
+                                      <motion.span 
+                                        className="px-4 py-1.5 rounded-full text-xs font-bold bg-gradient-to-r from-blue-500 to-blue-600 text-white border border-blue-400 shadow-md"
+                                        animate={isUpcoming && isAvailableSession ? {
+                                          boxShadow: [
+                                            '0 4px 6px -1px rgba(59, 130, 246, 0.3)',
+                                            '0 4px 12px -1px rgba(59, 130, 246, 0.5)',
+                                            '0 4px 6px -1px rgba(59, 130, 246, 0.3)',
+                                          ]
+                                        } : {}}
+                                        transition={{ 
+                                          duration: 2,
+                                          repeat: Infinity,
+                                          ease: "easeInOut"
+                                        }}
+                                      >
+                                        ✨ Available
+                                      </motion.span>
                                     )}
-                                  </div>
+                                  </motion.div>
 
-                                  <div className="flex items-center gap-2">
-                                    <CalendarIcon className="w-4 h-4 text-gray-400" />
-                                    <span>
+                                  {/* Student Info for Available Sessions */}
+                                  {session.learner_name === 'TBD' || session.learner_email === 'tbd@example.com' ? (
+                                    <motion.div 
+                                      className={`p-4 rounded-lg border ${
+                                        isUpcoming && isAvailableSession
+                                          ? 'bg-blue-50/80 border-blue-200 shadow-sm'
+                                          : 'bg-gray-50 border-gray-200'
+                                      }`}
+                                      initial={{ opacity: 0, scale: 0.95 }}
+                                      animate={{ opacity: 1, scale: 1 }}
+                                      transition={{ delay: 0.3 }}
+                                    >
+                                      <p className={`text-xs font-bold mb-1 ${
+                                        isUpcoming && isAvailableSession
+                                          ? 'text-blue-800'
+                                          : 'text-gray-700'
+                                      }`}>
+                                        No student assigned yet
+                                      </p>
+                                      <p className={`text-xs ${
+                                        isUpcoming && isAvailableSession
+                                          ? 'text-blue-600'
+                                          : 'text-gray-500'
+                                      }`}>
+                                        Waiting for a student to book this session
+                                      </p>
+                                    </motion.div>
+                                  ) : session.learner_email === userData?.email ? (
+                                    <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                                      <p className="text-xs font-semibold text-blue-900 mb-1">Your Session</p>
+                                      <p className="text-xs text-blue-700">You have booked this session</p>
+                                    </div>
+                                  ) : null}
+
+                                  {/* Date */}
+                                  <motion.div 
+                                    className={`flex items-center gap-2 ${
+                                      isUpcoming && isAvailableSession
+                                        ? 'text-blue-800'
+                                        : 'text-gray-700'
+                                    }`}
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.35 }}
+                                  >
+                                    <CalendarIcon className={`w-4 h-4 ${
+                                      isUpcoming && isAvailableSession
+                                        ? 'text-blue-600'
+                                        : 'text-gray-500'
+                                    }`} />
+                                    <span className="font-medium">
                                       {sessionDate.toLocaleDateString('en-US', { 
-                                        weekday: 'long', 
-                                        year: 'numeric', 
-                                        month: 'long', 
-                                        day: 'numeric' 
+                                        weekday: 'short', 
+                                        month: 'short', 
+                                        day: 'numeric',
+                                        year: 'numeric'
                                       })}
                                     </span>
-                                  </div>
+                                  </motion.div>
 
-                                  <div className="flex items-center gap-2">
-                                    <Clock className="w-4 h-4 text-gray-400" />
-                                    <span>
+                                  {/* Time & Duration */}
+                                  <motion.div 
+                                    className={`flex items-center gap-2 ${
+                                      isUpcoming && isAvailableSession
+                                        ? 'text-blue-800'
+                                        : 'text-gray-700'
+                                    }`}
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.4 }}
+                                  >
+                                    <Clock className={`w-4 h-4 ${
+                                      isUpcoming && isAvailableSession
+                                        ? 'text-blue-600'
+                                        : 'text-gray-500'
+                                    }`} />
+                                    <span className="font-medium">
                                       {new Date(`2000-01-01T${session.time}`).toLocaleTimeString('en-US', { 
                                         hour: 'numeric', 
                                         minute: '2-digit',
                                         hour12: true 
-                                      })} • {session.duration} minutes
+                                      })} • {session.duration} min
                                     </span>
-                                  </div>
+                                  </motion.div>
 
-                                  {session.notes && (
-                                    <div className="mt-2 pt-2 border-t border-gray-200">
-                                      <p className="text-sm text-gray-600">
-                                        <span className="font-medium">Notes: </span>
-                                        {session.notes}
-                                      </p>
-                                    </div>
+                                  {/* Amount */}
+                                  <motion.div 
+                                    className={`flex items-center gap-2 ${
+                                      isUpcoming && isAvailableSession
+                                        ? 'text-blue-800'
+                                        : 'text-gray-700'
+                                    }`}
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.45 }}
+                                  >
+                                    <span className={`font-bold text-lg ${
+                                      isUpcoming && isAvailableSession
+                                        ? 'text-blue-900'
+                                        : 'text-gray-900'
+                                      }`}>
+                                      {convertedAmounts[session.id] || `$${session.amount.toFixed(2)}`}
+                                    </span>
+                                  </motion.div>
+
+                                  {/* Meeting Type */}
+                                  {session.meeting_type && (
+                                    <motion.div 
+                                      className={`flex items-center gap-2 ${
+                                        isUpcoming && isAvailableSession
+                                          ? 'text-blue-800'
+                                          : 'text-gray-700'
+                                      }`}
+                                      initial={{ opacity: 0, x: -10 }}
+                                      animate={{ opacity: 1, x: 0 }}
+                                      transition={{ delay: 0.5 }}
+                                    >
+                                      <Video className={`w-4 h-4 ${
+                                        isUpcoming && isAvailableSession
+                                          ? 'text-blue-600'
+                                          : 'text-gray-500'
+                                      }`} />
+                                      <span className="font-medium capitalize">{session.meeting_type.replace('-', ' ')}</span>
+                                    </motion.div>
                                   )}
 
-                                  <div className="flex items-center gap-2 mt-2">
-                                    <span className="font-semibold text-gray-900">
-                                      ${session.amount.toFixed(2)}
-                                    </span>
-                                    <span className="text-xs text-gray-500">paid</span>
-                                  </div>
+                                  {/* Notes */}
+                                  {session.notes && (
+                                    <motion.div 
+                                      className={`mt-4 pt-4 border-t ${
+                                        isUpcoming && isAvailableSession
+                                          ? 'border-blue-200'
+                                          : 'border-gray-200'
+                                      }`}
+                                      initial={{ opacity: 0 }}
+                                      animate={{ opacity: 1 }}
+                                      transition={{ delay: 0.55 }}
+                                    >
+                                      <p className={`text-xs font-bold mb-2 ${
+                                        isUpcoming && isAvailableSession
+                                          ? 'text-blue-800'
+                                          : 'text-gray-700'
+                                      }`}>
+                                        Notes
+                                      </p>
+                                      <p className={`text-sm ${
+                                        isUpcoming && isAvailableSession
+                                          ? 'text-blue-700'
+                                          : 'text-gray-600'
+                                      }`}>
+                                        {session.notes}
+                                      </p>
+                                    </motion.div>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -904,43 +1501,187 @@ export default function LearnerDashboard() {
 
                           {/* Right Section - Meeting Link & Actions */}
                           <div className="flex flex-col gap-3 md:items-end">
-                            {session.meeting_link && session.meeting_type !== 'in-person' ? (
-                              <a
-                                href={session.meeting_link}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium text-sm"
-                              >
-                                <Video className="w-4 h-4" />
-                                Join Meeting
-                                <ExternalLink className="w-3 h-3" />
-                              </a>
-                            ) : session.meeting_type === 'in-person' ? (
-                              <div className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium">
-                                <MapPin className="w-4 h-4 inline-block mr-2" />
-                                In-Person Session
-                              </div>
-                            ) : (
-                              <div className="px-4 py-2 bg-gray-100 text-gray-500 rounded-lg text-sm">
-                                No meeting link available
-                              </div>
-                            )}
-
-                            {session.meeting_link && (
+                            {/* View Mentor Details Button */}
+                            {session.mentor_data && (
                               <button
                                 onClick={() => {
-                                  navigator.clipboard.writeText(session.meeting_link || '')
-                                  // You could add a toast notification here
+                                  setSelectedMentor(session.mentor_data!)
+                                  setIsModalOpen(true)
                                 }}
-                                className="text-xs text-blue-600 hover:text-blue-700 underline"
+                                className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors font-medium text-sm"
                               >
-                                Copy meeting link
+                                <Eye className="w-4 h-4" />
+                                View Mentor Details
                               </button>
                             )}
+
+                            {/* Join Meeting / Pay / Book Button */}
+                            {(() => {
+                              const sessionDateTime = new Date(`${session.date}T${session.time}`)
+                              const meetingEndTime = new Date(sessionDateTime.getTime() + (session.duration * 60000))
+                              const now = new Date()
+                              const isMeetingActive = now >= sessionDateTime && now <= meetingEndTime
+                              const isUpcoming = sessionDateTime > now
+                              const isEnded = now > meetingEndTime
+                              const isMySession = session.learner_email === userData?.email
+
+                              // If it's my session and I've paid
+                              if (isMySession && session.is_paid) {
+                                if (isMeetingActive && session.meeting_link && session.meeting_type !== 'in-person') {
+                                  return (
+                                    <>
+                                      <a
+                                        href={session.meeting_link}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium text-sm shadow-sm"
+                                      >
+                                        <Video className="w-4 h-4" />
+                                        Join Meeting Now
+                                        <ExternalLink className="w-3 h-3" />
+                                      </a>
+                                      <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium border border-green-200">
+                                        <Clock className="w-3 h-3 inline-block mr-1" />
+                                        Meeting is ongoing
+                                      </div>
+                                    </>
+                                  )
+                                } else if (isEnded && session.meeting_type !== 'in-person') {
+                                  return (
+                                    <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium">
+                                      <CheckCircle2 className="w-4 h-4 inline-block mr-2" />
+                                      Meeting has ended
+                                    </div>
+                                  )
+                                } else if (isUpcoming && session.meeting_link && session.meeting_type !== 'in-person') {
+                                  return (
+                                    <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium">
+                                      <Clock className="w-4 h-4 inline-block mr-2" />
+                                      Starts {sessionDateTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at {sessionDateTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                                    </div>
+                                  )
+                                } else if (session.meeting_type === 'in-person') {
+                                  if (isEnded) {
+                                    return (
+                                      <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium">
+                                        <CheckCircle2 className="w-4 h-4 inline-block mr-2" />
+                                        Session has ended
+                                      </div>
+                                    )
+                                  } else if (isMeetingActive) {
+                                    return (
+                                      <div className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-sm font-medium border border-green-200">
+                                        <MapPin className="w-4 h-4 inline-block mr-2" />
+                                        Session is ongoing
+                                      </div>
+                                    )
+                                  } else {
+                                    return (
+                                      <div className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium">
+                                        <MapPin className="w-4 h-4 inline-block mr-2" />
+                                        In-Person Session
+                                      </div>
+                                    )
+                                  }
+                                }
+                              }
+                              
+                              // If it's an available session (not booked by me)
+                              if (!isMySession && (session.learner_name === 'TBD' || session.learner_email === 'tbd@example.com')) {
+                                return (
+                                  <motion.button
+                                    onClick={() => {
+                                      if (session.mentor_data) {
+                                        setBookingMentor(session.mentor_data)
+                                        setIsBookingModalOpen(true)
+                                      }
+                                    }}
+                                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-500/50 relative overflow-hidden"
+                                    whileHover={{ 
+                                      scale: 1.05,
+                                      boxShadow: "0 10px 25px -5px rgba(59, 130, 246, 0.5)"
+                                    }}
+                                    whileTap={{ scale: 0.95 }}
+                                    animate={isUpcoming ? {
+                                      boxShadow: [
+                                        '0 10px 25px -5px rgba(59, 130, 246, 0.4)',
+                                        '0 10px 30px -5px rgba(59, 130, 246, 0.6)',
+                                        '0 10px 25px -5px rgba(59, 130, 246, 0.4)',
+                                      ]
+                                    } : {}}
+                                    transition={{ 
+                                      duration: 2,
+                                      repeat: Infinity,
+                                      ease: "easeInOut"
+                                    }}
+                                  >
+                                    <motion.div
+                                      className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"
+                                      animate={{
+                                        x: ['-100%', '100%']
+                                      }}
+                                      transition={{
+                                        duration: 2,
+                                        repeat: Infinity,
+                                        ease: "linear"
+                                      }}
+                                    />
+                                    <BookOpen className="w-5 h-5 relative z-10" />
+                                    <span className="relative z-10">Book This Session</span>
+                                  </motion.button>
+                                )
+                              }
+
+                              // If I haven't paid yet
+                              if (isMySession && !session.is_paid) {
+                                return (
+                                  <button
+                                    onClick={() => {
+                                      if (session.mentor_data) {
+                                        setBookingMentor(session.mentor_data)
+                                        setIsBookingModalOpen(true)
+                                      }
+                                    }}
+                                    className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium text-sm"
+                                  >
+                                    <DollarSign className="w-4 h-4" />
+                                    Pay & Join Meeting
+                                  </button>
+                                )
+                              }
+
+                              return null
+                            })()}
+
+                            {session.meeting_link && session.is_paid && session.learner_email === userData?.email && (() => {
+                              const sessionDateTime = new Date(`${session.date}T${session.time}`)
+                              const meetingEndTime = new Date(sessionDateTime.getTime() + (session.duration * 60000))
+                              const isMeetingActive = new Date() >= sessionDateTime && new Date() <= meetingEndTime
+                              
+                              if (isMeetingActive) {
+                                return (
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(session.meeting_link || '')
+                                      // You could add a toast notification here
+                                    }}
+                                    className="text-xs text-blue-600 hover:text-blue-700 underline"
+                                  >
+                                    Copy meeting link
+                                  </button>
+                                )
+                              }
+                              return null
+                            })()}
 
                             <div className="text-xs text-gray-500 mt-2">
                               Meeting Type: <span className="font-medium capitalize">{session.meeting_type.replace('-', ' ')}</span>
                             </div>
+                            {session.learner_email === userData?.email && !session.is_paid && (
+                              <div className="text-xs text-orange-600 font-medium">
+                                Payment Required
+                              </div>
+                            )}
                           </div>
                         </div>
                       </motion.div>
@@ -1016,7 +1757,7 @@ export default function LearnerDashboard() {
             setIsProfilePictureModalOpen(false)
             setProfilePictureMentor(null)
           }}
-          imageUrl={profilePictureMentor.avatar || '/images/user/user-01.jpg'}
+          imageUrl={profilePictureMentor.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(profilePictureMentor.name)}&background=3B82F6&color=fff&size=128`}
           mentorName={profilePictureMentor.name}
         />
       )}

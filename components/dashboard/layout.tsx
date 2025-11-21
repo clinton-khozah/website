@@ -31,6 +31,8 @@ import { supabase } from "@/lib/supabase"
 import { UserProfilePopup } from "./user-profile-popup"
 import { LogoutConfirmationModal } from "./logout-confirmation-modal"
 import { MessagesModal } from "./messages-modal"
+import { CreateSessionModal } from "./create-session-modal"
+import { MentorSettingsModal } from "./mentor-settings-modal"
 
 interface SidebarLink {
   icon: any
@@ -45,7 +47,7 @@ const getMainLinks = (userType: string): SidebarLink[] => {
       {
         icon: LayoutDashboard,
         label: "Dashboard",
-        href: "/dashboard/tutor"
+        href: "/dashboard"
       },
       {
         icon: Users,
@@ -102,11 +104,6 @@ const bottomLinks: SidebarLink[] = [
     href: "/dashboard/advertiser/settings"
   },
   {
-    icon: HelpCircle,
-    label: "Help & Support",
-    href: "/dashboard/advertiser/support"
-  },
-  {
     icon: LogOut,
     label: "Logout",
     href: "/auth/logout"
@@ -120,10 +117,12 @@ export function DashboardLayout({
   children: React.ReactNode
   role?: string
 }) {
+  const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isProfileOpen, setIsProfileOpen] = useState(false)
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false)
   const [isMessagesModalOpen, setIsMessagesModalOpen] = useState(false)
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [userData, setUserData] = useState<any>(null)
   const pathname = usePathname()
 
@@ -134,11 +133,12 @@ export function DashboardLayout({
         if (!user) return
 
         // Check if user is in mentors or students table
+        // For mentors, use user_id column (UUID) to match Supabase Auth user.id
         const { data: mentorData, error: mentorError } = await supabase
           .from('mentors')
           .select('*')
-          .eq('id', user.id)
-          .single()
+          .eq('user_id', user.id)
+          .maybeSingle()
 
         if (!mentorError && mentorData) {
           // Convert verified field to boolean if it's a string
@@ -165,13 +165,62 @@ export function DashboardLayout({
             }
           }
           
+          // Parse languages and specialization if they're strings
+          let languages_spoken = mentorData.languages || []
+          if (typeof languages_spoken === 'string') {
+            try {
+              languages_spoken = JSON.parse(languages_spoken)
+            } catch {
+              languages_spoken = []
+            }
+          }
+          if (!Array.isArray(languages_spoken)) {
+            languages_spoken = []
+          }
+          
+          // Determine user type from user metadata or default to 'mentor'
+          // Check user metadata to see if they signed up as tutor, mentor, or other
+          const userTypeFromMetadata = user.user_metadata?.user_type
+          let userType = 'mentor' // default
+          
+          if (userTypeFromMetadata === 'tutor') {
+            userType = 'tutor'
+          } else if (userTypeFromMetadata === 'mentor') {
+            userType = 'mentor'
+          } else if (userTypeFromMetadata === 'user') {
+            // If they signed up as 'user' or 'other', check their title to determine
+            const titleLower = (mentorData.title || '').toLowerCase()
+            if (titleLower.includes('tutor') || titleLower.includes('tutoring')) {
+              userType = 'tutor'
+            } else {
+              userType = 'mentor'
+            }
+          }
+          
           setUserData({ 
             ...mentorData, 
+            id: mentorData.user_id || user.id, // Use user_id as the id for consistency
+            mentor_db_id: mentorData.id, // Store the database ID for session creation
             full_name: mentorData.name, 
-            user_type: 'mentor',
+            user_type: userType,
             verified,
             social_links,
-            settings
+            settings,
+            languages_spoken,
+            avatar_url: mentorData.avatar || null,
+            phone_number: mentorData.phone_number || null,
+            country: mentorData.country || null,
+            city: mentorData.city || null,
+            bio: mentorData.description || null,
+            title: mentorData.title,
+            experience: mentorData.experience,
+            hourly_rate: mentorData.hourly_rate,
+            availability: mentorData.availability,
+            specialization: mentorData.specialization,
+            qualifications: mentorData.qualifications,
+            website: mentorData.personal_website || null,
+            created_at: mentorData.created_at || null,
+            updated_at: mentorData.updated_at || null
           })
         } else {
           // Check students table
@@ -326,7 +375,10 @@ export function DashboardLayout({
           {!isSidebarCollapsed && (
             <div className="px-2 my-4">
               {userType === 'mentor' || userType === 'tutor' ? (
-                <button className="w-full px-3 py-2 bg-blue-600 text-white rounded-lg flex items-center justify-center text-sm font-medium hover:bg-blue-700 transition-colors">
+                <button 
+                  onClick={() => setIsCreateSessionOpen(true)}
+                  className="w-full px-3 py-2 bg-blue-600 text-white rounded-lg flex items-center justify-center text-sm font-medium hover:bg-blue-700 transition-colors"
+                >
                   <PlusCircle className="h-5 w-5 mr-2" />
                   Create Session
                 </button>
@@ -363,6 +415,27 @@ export function DashboardLayout({
                     className={clsx(
                       "flex items-center w-full px-3 py-2 text-sm font-medium rounded-lg transition-colors",
                       "text-gray-700 hover:bg-blue-50 hover:text-blue-600",
+                      isSidebarCollapsed && "justify-center"
+                    )}
+                    title={isSidebarCollapsed ? link.label : undefined}
+                  >
+                    <link.icon className={clsx("h-5 w-5 flex-shrink-0", !isSidebarCollapsed && "mr-3")} />
+                    {!isSidebarCollapsed && <span>{link.label}</span>}
+                  </button>
+                )
+              }
+              
+              // Handle Settings button separately - open modal for mentors/tutors
+              if (link.label === "Settings" && (userType === 'mentor' || userType === 'tutor')) {
+                return (
+                  <button
+                    key={link.href}
+                    onClick={() => setIsSettingsModalOpen(true)}
+                    className={clsx(
+                      "flex items-center w-full px-3 py-2 text-sm font-medium rounded-lg transition-colors",
+                      pathname === link.href
+                        ? "bg-blue-100 text-blue-700"
+                        : "text-gray-700 hover:bg-blue-50 hover:text-blue-600",
                       isSidebarCollapsed && "justify-center"
                     )}
                     title={isSidebarCollapsed ? link.label : undefined}
@@ -422,9 +495,13 @@ export function DashboardLayout({
                 {userData?.full_name || 'User'}
               </h2>
               <p className="text-sm font-medium bg-gradient-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent group-hover:from-blue-600 group-hover:to-purple-600 transition-colors">
-                {userData?.user_type === 'mentor' || userData?.user_type === 'tutor' 
-                  ? 'Tutor/Mentor' 
-                  : 'Student'}
+                {userData?.user_type === 'tutor' 
+                  ? 'Tutor' 
+                  : userData?.user_type === 'mentor' 
+                  ? 'Mentor' 
+                  : userData?.user_type === 'student'
+                  ? 'Student'
+                  : 'User'}
               </p>
             </div>
             <div className="relative flex items-center gap-2">
@@ -472,6 +549,108 @@ export function DashboardLayout({
           userType={userType}
           userId={userData.id}
           userData={userData}
+        />
+      )}
+
+      {/* Create Session Modal */}
+      {userData && (userType === 'mentor' || userType === 'tutor') && (
+        <CreateSessionModal
+          isOpen={isCreateSessionOpen}
+          onClose={() => setIsCreateSessionOpen(false)}
+          mentorId={userData.mentor_db_id || userData.id || ''}
+          onSuccess={() => {
+            // Optionally refresh data or show success message
+            window.location.reload()
+          }}
+        />
+      )}
+
+      {/* Settings Modal for Mentors/Tutors */}
+      {(userType === 'mentor' || userType === 'tutor') && userData && (
+        <MentorSettingsModal
+          isOpen={isSettingsModalOpen}
+          onClose={() => setIsSettingsModalOpen(false)}
+          userData={userData}
+          onUpdate={() => {
+            // Refresh user data after settings update
+            const fetchUserData = async () => {
+              try {
+                const { data: { user } } = await supabase.auth.getUser()
+                if (!user) return
+
+                const { data: mentorData } = await supabase
+                  .from('mentors')
+                  .select('*')
+                  .eq('user_id', user.id)
+                  .maybeSingle()
+
+                if (mentorData) {
+                  // Process mentor data similar to initial fetch
+                  let social_links = mentorData.social_links || {}
+                  if (typeof social_links === 'string') {
+                    try {
+                      social_links = JSON.parse(social_links)
+                    } catch {
+                      social_links = {}
+                    }
+                  }
+                  
+                  let settings = mentorData.settings || {}
+                  if (typeof settings === 'string') {
+                    try {
+                      settings = JSON.parse(settings)
+                    } catch {
+                      settings = {}
+                    }
+                  }
+
+                  let languages = mentorData.languages || []
+                  if (typeof languages === 'string') {
+                    try {
+                      languages = JSON.parse(languages)
+                    } catch {
+                      languages = []
+                    }
+                  }
+
+                  let specialization = mentorData.specialization || []
+                  if (typeof specialization === 'string') {
+                    try {
+                      specialization = JSON.parse(specialization)
+                    } catch {
+                      specialization = []
+                    }
+                  }
+
+                  setUserData({
+                    ...mentorData,
+                    id: mentorData.user_id || user.id,
+                    mentor_db_id: mentorData.id,
+                    full_name: mentorData.name,
+                    avatar_url: mentorData.avatar || null,
+                    bio: mentorData.description || null,
+                    user_type: userType,
+                    verified: mentorData.is_verified === true || mentorData.is_verified === 'true',
+                    social_links,
+                    settings,
+                    languages_spoken: languages,
+                    phone_number: mentorData.phone_number || null,
+                    country: mentorData.country || null,
+                    city: mentorData.city || null,
+                    title: mentorData.title,
+                    experience: mentorData.experience,
+                    hourly_rate: mentorData.hourly_rate,
+                    availability: mentorData.availability,
+                    specialization: specialization,
+                    qualifications: mentorData.qualifications,
+                  })
+                }
+              } catch (error) {
+                console.error('Error refreshing user data:', error)
+              }
+            }
+            fetchUserData()
+          }}
         />
       )}
     </div>

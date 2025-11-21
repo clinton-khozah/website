@@ -13,6 +13,9 @@ import {
   Search
 } from "lucide-react"
 import { AnimatedButton } from "@/components/animated-button"
+import { supabase } from '@/lib/supabase'
+import { useRouter } from 'next/navigation'
+import { MentorProfileCompletionForm } from '@/components/dashboard/mentor-profile-completion-form'
 
 const stats = [
   {
@@ -115,6 +118,200 @@ const recentMessages = [
 
 export default function CompanyDashboard() {
   const [activeTab, setActiveTab] = React.useState<'overview' | 'analytics' | 'reports'>('overview')
+  const [userData, setUserData] = React.useState<any>(null)
+  const [mentorData, setMentorData] = React.useState<any>(null)
+  const [loading, setLoading] = React.useState(true)
+  const [isProfileCompletionOpen, setIsProfileCompletionOpen] = React.useState(false)
+  const router = useRouter()
+
+  React.useEffect(() => {
+    const fetchUserData = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) {
+          router.push('/')
+          return
+        }
+
+        // Fetch mentor data
+        const { data: mentor, error: mentorError } = await supabase
+          .from('mentors')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle()
+
+        if (mentorError || !mentor) {
+          // Check user metadata to see if they signed up as tutor/mentor
+          const userType = user.user_metadata?.user_type
+          
+          if (userType === 'tutor' || userType === 'mentor') {
+            // User signed up as tutor but mentor record doesn't exist yet
+            // Create a basic mentor record
+            const { data: newMentor, error: createError } = await supabase
+              .from('mentors')
+              .insert({
+                id: user.id,
+                name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
+                email: user.email || '',
+                title: '',
+                description: '',
+                specialization: '[]',
+                rating: 1.00,
+                total_reviews: 0,
+                hourly_rate: 0.00,
+                avatar: user.user_metadata?.avatar_url || '',
+                experience: 0,
+                languages: '[]',
+                availability: 'Available now',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                phone_number: '',
+                gender: '',
+                age: null,
+                country: '',
+                latitude: null,
+                longitude: null,
+                sessions_conducted: 0,
+                qualifications: '',
+                id_document: '',
+                id_number: '',
+                cv_document: '',
+                payment_method: '',
+                linkedin_profile: '',
+                github_profile: '',
+                twitter_profile: '',
+                facebook_profile: '',
+                instagram_profile: '',
+                personal_website: '',
+                bank_name: '',
+                account_holder_name: '',
+                account_number: '',
+                routing_number: '',
+                payment_account_details: '{}',
+                payment_period: 'per_session',
+                is_complete: false,
+                is_verified: false
+              })
+              .select()
+              .single()
+
+            if (createError) {
+              console.error('Error creating mentor record:', createError)
+              // Still allow access, user can complete profile later
+              setUserData({ 
+                id: user.id, 
+                email: user.email || '', 
+                full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
+                user_type: 'mentor'
+              })
+            } else if (newMentor) {
+              setMentorData(newMentor)
+              setUserData({ ...newMentor, full_name: newMentor.name, user_type: 'mentor' })
+              // Show profile completion modal for new mentors
+              const isIncomplete = newMentor.is_complete === false || 
+                                  newMentor.is_complete === null || 
+                                  newMentor.is_complete === undefined ||
+                                  newMentor.is_complete === 'false' ||
+                                  newMentor.is_complete === 0
+              
+              if (isIncomplete) {
+                console.log('New mentor created, showing modal. is_complete:', newMentor.is_complete)
+                setTimeout(() => {
+                  setIsProfileCompletionOpen(true)
+                }, 500) // Increased timeout to ensure component is fully rendered
+              }
+            }
+          } else {
+            // User is not a mentor, redirect to learner dashboard
+            router.push('/dashboard/learner')
+            return
+          }
+        } else {
+          setMentorData(mentor)
+          // Use mentor data as user data for tutors
+          setUserData({ ...mentor, full_name: mentor.name, user_type: 'mentor' })
+          
+          // Check if profile is incomplete (handle both boolean and string "false")
+          // Supabase might return boolean as string, so we need to handle both
+          const isCompleteValue = mentor.is_complete
+          const isIncomplete = isCompleteValue === false || 
+                              isCompleteValue === null || 
+                              isCompleteValue === undefined ||
+                              isCompleteValue === 'false' ||
+                              String(isCompleteValue).toLowerCase() === 'false' ||
+                              isCompleteValue === 0 ||
+                              isCompleteValue === '0'
+          
+          console.log('Mentor data loaded - is_complete:', isCompleteValue, 'type:', typeof isCompleteValue, 'isIncomplete:', isIncomplete)
+          
+          if (isIncomplete) {
+            console.log('Profile is incomplete, will show modal. is_complete:', isCompleteValue)
+            // Use a longer timeout to ensure the component is fully rendered
+            setTimeout(() => {
+              console.log('Setting isProfileCompletionOpen to true')
+              setIsProfileCompletionOpen(true)
+            }, 800)
+          } else {
+            console.log('Profile is complete. is_complete:', isCompleteValue)
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching user data:', error)
+        router.push('/')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchUserData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Check if profile completion modal should be shown after data loads
+  React.useEffect(() => {
+    console.log('useEffect triggered - loading:', loading, 'mentorData:', mentorData, 'isProfileCompletionOpen:', isProfileCompletionOpen)
+    if (!loading && mentorData) {
+      // Check if profile is incomplete (handle both boolean and string "false")
+      // Convert to string first to handle all cases
+      const isCompleteValue = mentorData.is_complete
+      const isCompleteStr = String(isCompleteValue).toLowerCase().trim()
+      const isIncomplete = isCompleteValue === false || 
+                          isCompleteValue === null || 
+                          isCompleteValue === undefined ||
+                          isCompleteStr === 'false' ||
+                          isCompleteStr === '0' ||
+                          isCompleteValue === 0
+      
+      console.log('Checking profile completion - is_complete:', isCompleteValue, 'type:', typeof isCompleteValue, 'string:', isCompleteStr, 'isIncomplete:', isIncomplete)
+      
+      if (isIncomplete && !isProfileCompletionOpen) {
+        console.log('useEffect: Profile is incomplete, showing modal. is_complete:', isCompleteValue)
+        // Use setTimeout to ensure state update happens after render
+        const timer = setTimeout(() => {
+          setIsProfileCompletionOpen(true)
+          console.log('Modal state set to true')
+        }, 1000)
+        return () => clearTimeout(timer)
+      } else if (!isIncomplete) {
+        console.log('Profile is complete, not showing modal')
+      } else {
+        console.log('Modal already open or will be opened')
+      }
+    } else if (!loading && !mentorData) {
+      console.log('No mentor data found, not showing modal')
+    }
+  }, [loading, mentorData, isProfileCompletionOpen])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-[#0a0e1a]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
+          <p className="mt-4 text-gray-400">Loading...</p>
+        </div>
+      </div>
+    )
+  }
 
   // Logo colors for the circle background
   const circleColors = {
@@ -678,6 +875,38 @@ export default function CompanyDashboard() {
           />
         </motion.div>
       </div>
+
+      {/* Mentor Profile Completion Form */}
+      {userData && userData.id && (
+        <MentorProfileCompletionForm
+          isOpen={isProfileCompletionOpen}
+          onClose={() => {
+            console.log('Closing profile completion modal')
+            setIsProfileCompletionOpen(false)
+          }}
+          userId={userData.id}
+          onComplete={() => {
+            console.log('Profile completion finished')
+            setIsProfileCompletionOpen(false)
+            // Refresh mentor data
+            const fetchMentorData = async () => {
+              const { data: { user } } = await supabase.auth.getUser()
+              if (user) {
+                const { data: mentor } = await supabase
+                  .from('mentors')
+                  .select('*')
+                  .eq('id', user.id)
+                  .single()
+                if (mentor) {
+                  setMentorData(mentor)
+                  setUserData({ ...mentor, full_name: mentor.name, user_type: 'mentor' })
+                }
+              }
+            }
+            fetchMentorData()
+          }}
+        />
+      )}
     </div>
   )
 } 
