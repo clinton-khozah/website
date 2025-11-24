@@ -123,7 +123,7 @@ export function MentorProfileCompletionForm({ isOpen, onClose, userId, onComplet
       const { data: mentorData, error } = await supabase
         .from('mentors')
         .select('*')
-        .eq('id', userId)
+        .eq('user_id', userId)
         .maybeSingle()
 
       if (error && error.code !== 'PGRST116') {
@@ -357,6 +357,7 @@ export function MentorProfileCompletionForm({ isOpen, onClose, userId, onComplet
         }
       }
 
+      // Build update data - explicitly exclude id and user_id to avoid conflicts
       const updateData: any = {
         name: formData.name.trim(),
         title: formData.title.trim(),
@@ -389,18 +390,58 @@ export function MentorProfileCompletionForm({ isOpen, onClose, userId, onComplet
         is_complete: true,
         updated_at: new Date().toISOString()
       }
+      
+      // Explicitly remove id if it somehow got included
+      delete updateData.id
 
       if (avatarPreview) updateData.avatar = avatarPreview
       if (qualificationsPreview) updateData.qualifications = qualificationsPreview
       if (idDocumentPreview) updateData.id_document = idDocumentPreview
       if (cvDocumentPreview) updateData.cv_document = cvDocumentPreview
 
-      const { error } = await supabase
+      // Check if mentor record exists first - get the numeric id
+      const { data: existingMentor, error: checkError } = await supabase
         .from('mentors')
-        .update(updateData)
+        .select('id, user_id')
         .eq('user_id', userId)
+        .maybeSingle()
 
-      if (error) throw error
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('Error checking existing mentor:', checkError)
+        throw checkError
+      }
+
+      let error
+      if (existingMentor && existingMentor.id) {
+        // Update existing record using the numeric id
+        console.log('Updating existing mentor record with id:', existingMentor.id)
+        const { error: updateError } = await supabase
+          .from('mentors')
+          .update(updateData)
+          .eq('id', existingMentor.id)  // Use numeric id for update
+        error = updateError
+        if (error) {
+          console.error('Update error details:', error)
+        }
+      } else {
+        // Insert new record with user_id
+        console.log('Inserting new mentor record for user_id:', userId)
+        const { error: insertError } = await supabase
+          .from('mentors')
+          .insert({
+            ...updateData,
+            user_id: userId
+          })
+        error = insertError
+        if (error) {
+          console.error('Insert error details:', error)
+        }
+      }
+
+      if (error) {
+        console.error('Error saving mentor profile:', error)
+        throw error
+      }
 
       onComplete()
     } catch (error: any) {

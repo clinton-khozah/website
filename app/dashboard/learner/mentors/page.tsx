@@ -17,7 +17,8 @@ import {
   Eye,
   Loader2,
   AlertCircle,
-  ArrowLeft
+  ArrowLeft,
+  Sparkles
 } from "lucide-react"
 import { motion } from "framer-motion"
 import { MentorDetailsModal } from "@/components/mentors/mentor-details-modal"
@@ -77,6 +78,7 @@ export default function MentorsPage() {
   const [isProfilePictureModalOpen, setIsProfilePictureModalOpen] = useState(false)
   const [isGlobeViewerOpen, setIsGlobeViewerOpen] = useState(false)
   const [currencyRates, setCurrencyRates] = useState<Map<number, string>>(new Map())
+  const [mentorsWithAds, setMentorsWithAds] = useState<Set<number>>(new Set())
 
   // Fetch user data
   useEffect(() => {
@@ -178,6 +180,36 @@ export default function MentorsPage() {
 
     fetchMentors()
   }, [])
+
+  // Fetch active ad campaigns for mentors
+  useEffect(() => {
+    const fetchActiveCampaigns = async () => {
+      if (mentors.length === 0) return
+
+      try {
+        // Fetch all active campaigns from Supabase
+        const { data: campaigns, error } = await supabase
+          .from('ad_campaigns')
+          .select('mentor_id')
+          .eq('status', 'active')
+
+        if (error) {
+          console.error('Error fetching active campaigns:', error)
+          return
+        }
+
+        if (campaigns && campaigns.length > 0) {
+          // Create a set of mentor IDs with active campaigns
+          const mentorIdsWithAds = new Set(campaigns.map((campaign: any) => Number(campaign.mentor_id)))
+          setMentorsWithAds(mentorIdsWithAds)
+        }
+      } catch (error) {
+        console.error('Error fetching active campaigns:', error)
+      }
+    }
+
+    fetchActiveCampaigns()
+  }, [mentors])
 
   // Search and filter mentors
   useEffect(() => {
@@ -502,8 +534,28 @@ export default function MentorsPage() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: index * 0.1 }}
-                className="bg-white rounded-xl p-6 shadow-sm hover:shadow-lg transition-all duration-300 border border-gray-200 flex flex-col h-full"
+                className={`bg-white rounded-xl p-6 shadow-sm hover:shadow-lg transition-all duration-300 border flex flex-col h-full relative ${
+                  mentorsWithAds.has(mentor.id) 
+                    ? 'border-yellow-400 border-2 shadow-yellow-100' 
+                    : 'border-gray-200'
+                }`}
               >
+                {/* Sponsored Badge - Top Right Corner */}
+                {mentorsWithAds.has(mentor.id) && (
+                  <motion.div
+                    initial={{ scale: 0, rotate: -180 }}
+                    animate={{ scale: 1, rotate: 0 }}
+                    transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                    className="absolute top-3 right-3 z-10"
+                  >
+                    <div className="relative">
+                      <div className="absolute inset-0 bg-yellow-400 blur-md opacity-50 rounded-full"></div>
+                      <div className="relative bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-full p-2 shadow-lg border-2 border-yellow-300">
+                        <Star className="w-5 h-5 text-white fill-white" />
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
                 {/* Header with Avatar and Price */}
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center space-x-3">
@@ -534,6 +586,17 @@ export default function MentorsPage() {
                         <h3 className="text-gray-900 font-semibold text-base">
                           {mentor.name}
                         </h3>
+                        {mentorsWithAds.has(mentor.id) && (
+                          <motion.span
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-gradient-to-r from-yellow-400 to-orange-500 text-white rounded-full text-xs font-bold border-2 border-yellow-300 shadow-lg"
+                            title="This mentor has active advertising"
+                          >
+                            <Sparkles className="w-3 h-3 fill-white" />
+                            <span className="font-semibold">Sponsored</span>
+                          </motion.span>
+                        )}
                         {mentor.is_verified && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium border border-blue-200">
                             <CheckCircle2 className="w-3 h-3 fill-blue-600 text-blue-600" />

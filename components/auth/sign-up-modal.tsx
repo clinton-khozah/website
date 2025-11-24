@@ -82,7 +82,12 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
       // Show verification modal
       setShowVerification(true)
     } catch (error: any) {
-      setError(error.message || "An error occurred during sign up")
+      let errorMessage = error.message || "An error occurred during sign up"
+      // Replace "Failed to fetch" with a more user-friendly message
+      if (errorMessage.includes("Failed to fetch") || errorMessage.includes("fetch")) {
+        errorMessage = "Check your internet connection"
+      }
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -261,7 +266,12 @@ export function SignUpModal({ isOpen, onClose }: SignUpModalProps) {
       onClose()
     } catch (error: any) {
       console.error('Google sign-up error:', error)
-      setError(error.message || "An error occurred during Google sign up.")
+      let errorMessage = error.message || "An error occurred during Google sign up."
+      // Replace "Failed to fetch" with a more user-friendly message
+      if (errorMessage.includes("Failed to fetch") || errorMessage.includes("fetch")) {
+        errorMessage = "Check your internet connection"
+      }
+      setError(errorMessage)
       setLoading(false)
     }
   }

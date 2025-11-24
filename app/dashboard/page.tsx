@@ -3,6 +3,8 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
 import {
   ArrowRight,
   BarChart3,
@@ -22,12 +24,18 @@ import {
   Video,
   User,
   Copy,
+  ClipboardList,
+  CheckCircle2,
+  Star,
+  Download,
+  Send,
+  MousePointer,
 } from "lucide-react"
 import Link from "next/link"
 import { AnimatedBorderCard } from "@/components/ui/animated-border-card"
 import { motion } from "framer-motion"
 import { DisplayCards } from "@/components/ui/display-cards"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Meteors } from "@/components/ui/meteors"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -44,6 +52,19 @@ import { MentorProfileCompletionForm } from '@/components/dashboard/mentor-profi
 import { DashboardLayout } from '@/components/dashboard/layout'
 import { ProfileCompletionSuccessModal } from '@/components/dashboard/profile-completion-success-modal'
 import { TutorApplicationModal } from '@/components/dashboard/tutor-application-modal'
+import jsPDF from "jspdf"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
+import { toast } from "sonner"
+import { Loader2 } from "lucide-react"
+import { convertAndFormatPrice } from '@/lib/currency'
 
 const cardVariants = {
   hidden: {
@@ -95,18 +116,7 @@ const topPerformingAdSpaces = [
   },
 ];
 
-const revenueData = [
-  { month: "Jan", revenue: 8500 },
-  { month: "Feb", revenue: 9200 },
-  { month: "Mar", revenue: 10500 },
-  { month: "Apr", revenue: 0 },
-  { month: "May", revenue: 0 },
-  { month: "Jun", revenue: 0 },
-];
-
 export default function DashboardPage() {
-  const currentMonth = revenueData.find(data => data.month === "Mar") || revenueData[revenueData.length - 1]
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth)
   const [userData, setUserData] = useState<any>(null)
   const [mentorData, setMentorData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -115,7 +125,73 @@ export default function DashboardPage() {
   const [isApplicationModalOpen, setIsApplicationModalOpen] = useState(false)
   const [sessions, setSessions] = useState<any[]>([])
   const [sessionsLoading, setSessionsLoading] = useState(false)
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [convertedAmounts, setConvertedAmounts] = useState<Record<string, string>>({})
+  const [adAccount, setAdAccount] = useState<any>(null)
+  const [campaigns, setCampaigns] = useState<any[]>([])
+  const [transactions, setTransactions] = useState<any[]>([])
+  const [tasks, setTasks] = useState<any[]>([])
+  const [tasksLoading, setTasksLoading] = useState(false)
+  const [selectedTask, setSelectedTask] = useState<any>(null)
+  const [isGradeModalOpen, setIsGradeModalOpen] = useState(false)
+  const [grading, setGrading] = useState(false)
+  const [gradeData, setGradeData] = useState({
+    score: "",
+    feedback: ""
+  })
+  const [adClicks, setAdClicks] = useState<any[]>([])
+  const [adImpressions, setAdImpressions] = useState<any[]>([])
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const router = useRouter()
+
+  // Calculate monthly revenue from paid sessions (memoized to recalculate when sessions change)
+  const revenueData = useMemo(() => {
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    const currentDate = new Date()
+    const currentMonthIndex = currentDate.getMonth()
+    
+    // Get last 6 months
+    const months = []
+    for (let i = 5; i >= 0; i--) {
+      const monthIndex = (currentMonthIndex - i + 12) % 12
+      const year = currentDate.getFullYear() - (currentMonthIndex - i < 0 ? 1 : 0)
+      months.push({
+        month: monthNames[monthIndex],
+        monthIndex: monthIndex,
+        year: year,
+        revenue: 0
+      })
+    }
+    
+    // Calculate revenue for each month from paid sessions
+    sessions
+      .filter(s => s.is_paid)
+      .forEach(session => {
+        const sessionDate = new Date(session.date)
+        const sessionMonth = sessionDate.getMonth()
+        const sessionYear = sessionDate.getFullYear()
+        
+        const monthData = months.find(m => 
+          m.monthIndex === sessionMonth && m.year === sessionYear
+        )
+        
+        if (monthData) {
+          monthData.revenue += parseFloat(session.amount || 0)
+        }
+      })
+    
+    return months
+  }, [sessions])
+  
+  const currentMonth = revenueData[revenueData.length - 1] || revenueData[0]
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth)
+  
+  // Update selected month when revenueData changes
+  useEffect(() => {
+    if (currentMonth && (!selectedMonth || selectedMonth.month !== currentMonth.month)) {
+      setSelectedMonth(currentMonth)
+    }
+  }, [revenueData, currentMonth, selectedMonth])
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -370,6 +446,408 @@ export default function DashboardPage() {
     fetchSessions()
   }, [mentorData?.id, userData?.id])
 
+  // Fetch tasks for grading
+  useEffect(() => {
+    const fetchTasks = async () => {
+      if (!mentorData?.id) return
+
+      try {
+        setTasksLoading(true)
+        const { data, error } = await supabase
+          .from('tasks')
+          .select(`
+            *,
+            session:sessions (
+              topic,
+              date,
+              time
+            ),
+            learner:users!tasks_learner_id_fkey (
+              email,
+              full_name
+            )
+          `)
+          .eq('mentor_id', mentorData.id)
+          .order('created_at', { ascending: false })
+
+        if (error) throw error
+        setTasks(data || [])
+      } catch (error) {
+        console.error('Error fetching tasks:', error)
+      } finally {
+        setTasksLoading(false)
+      }
+    }
+
+    fetchTasks()
+  }, [mentorData?.id])
+
+  // Fetch ad account data for reports
+  useEffect(() => {
+    const fetchAdData = async () => {
+      if (!mentorData?.id) return
+
+      try {
+        // Fetch ad account
+        const accountResponse = await fetch(`http://127.0.0.1:8000/api/v1/mentors/ads/account/${mentorData.id}/`)
+        const accountData = await accountResponse.json()
+        if (accountData.success && accountData.account) {
+          setAdAccount(accountData.account)
+        }
+
+        // Fetch campaigns
+        const campaignsResponse = await fetch(`http://127.0.0.1:8000/api/v1/mentors/ads/campaigns/${mentorData.id}/`)
+        const campaignsData = await campaignsResponse.json()
+        if (campaignsData.success && campaignsData.campaigns) {
+          setCampaigns(campaignsData.campaigns)
+        }
+
+        // Fetch transactions
+        const transactionsResponse = await fetch(`http://127.0.0.1:8000/api/v1/mentors/ads/transactions/${mentorData.id}/`)
+        const transactionsData = await transactionsResponse.json()
+        if (transactionsData.success && transactionsData.transactions) {
+          setTransactions(transactionsData.transactions)
+        }
+      } catch (error) {
+        console.error('Error fetching ad data:', error)
+      }
+    }
+
+    fetchAdData()
+  }, [mentorData?.id])
+
+  // Auto-detect user location on page load for currency conversion
+  useEffect(() => {
+    if (!userLocation && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          })
+        },
+        (error) => {
+          console.error("Error getting location for currency conversion:", error)
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: 5000,
+          maximumAge: 3600000 // Cache for 1 hour
+        }
+      )
+    }
+  }, [userLocation])
+
+  // Convert all session amounts when sessions or user location changes
+  useEffect(() => {
+    const convertAllAmounts = async () => {
+      if (sessions.length === 0) {
+        setConvertedAmounts({})
+        return
+      }
+      
+      const conversions: Record<string, string> = {}
+      
+      for (const session of sessions) {
+        try {
+          // Assume amount in database is in USD
+          const usdAmount = parseFloat(session.amount || 0)
+          if (usdAmount === 0) {
+            conversions[session.id] = '$0.00'
+            continue
+          }
+          
+          // Try to use user location first, then fallback to mentor's country
+          let locationToUse = userLocation
+          
+          // If no user location but mentor has country, try to use mentor's country
+          if (!locationToUse && mentorData?.country) {
+            const countryLower = mentorData.country.toLowerCase()
+            // Map common country names to approximate coordinates for currency conversion
+            if (countryLower.includes('south africa') || countryLower.includes('southafrica') || countryLower === 'za') {
+              locationToUse = { lat: -25.7479, lng: 28.2293 } // Pretoria, South Africa
+            } else if (countryLower.includes('united states') || countryLower.includes('usa') || countryLower === 'us') {
+              locationToUse = { lat: 40.7128, lng: -74.0060 } // New York, USA
+            } else if (countryLower.includes('united kingdom') || countryLower.includes('uk') || countryLower === 'gb') {
+              locationToUse = { lat: 51.5074, lng: -0.1278 } // London, UK
+            } else if (countryLower.includes('canada') || countryLower === 'ca') {
+              locationToUse = { lat: 45.5017, lng: -73.5673 } // Montreal, Canada
+            } else if (countryLower.includes('australia') || countryLower === 'au') {
+              locationToUse = { lat: -33.8688, lng: 151.2093 } // Sydney, Australia
+            } else if (countryLower.includes('india') || countryLower === 'in') {
+              locationToUse = { lat: 28.6139, lng: 77.2090 } // New Delhi, India
+            } else if (countryLower.includes('nigeria') || countryLower === 'ng') {
+              locationToUse = { lat: 6.5244, lng: 3.3792 } // Lagos, Nigeria
+            } else if (countryLower.includes('kenya') || countryLower === 'ke') {
+              locationToUse = { lat: -1.2921, lng: 36.8219 } // Nairobi, Kenya
+            } else if (countryLower.includes('ghana') || countryLower === 'gh') {
+              locationToUse = { lat: 5.6037, lng: -0.1870 } // Accra, Ghana
+            }
+          }
+          
+          if (locationToUse) {
+            const result = await convertAndFormatPrice(usdAmount, locationToUse)
+            conversions[session.id] = result.formatted
+          } else {
+            // No location, use USD
+            conversions[session.id] = `$${usdAmount.toFixed(2)}`
+          }
+        } catch (error) {
+          console.error(`Error converting currency for session ${session.id}:`, error)
+          // Fallback to USD
+          conversions[session.id] = `$${parseFloat(session.amount || 0).toFixed(2)}`
+        }
+      }
+      
+      setConvertedAmounts(conversions)
+    }
+    
+    convertAllAmounts()
+    
+    // Also convert total revenue for display
+    if (sessions.length > 0 && userLocation) {
+      const totalRevenue = sessions
+        .filter(s => s.is_paid)
+        .reduce((sum, s) => sum + parseFloat(s.amount || 0), 0)
+      
+      if (totalRevenue > 0) {
+        convertAndFormatPrice(totalRevenue, userLocation)
+          .then(result => {
+            setConvertedAmounts(prev => ({ ...prev, total: result.formatted }))
+          })
+          .catch(() => {
+            // Fallback handled in display
+          })
+      }
+    }
+  }, [sessions, userLocation, mentorData?.country])
+
+  // Helper function to load logo image
+  const loadLogoImage = (): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = img.width
+          canvas.height = img.height
+          const ctx = canvas.getContext('2d')
+          if (ctx) {
+            ctx.drawImage(img, 0, 0)
+            resolve(canvas.toDataURL('image/png'))
+          } else {
+            reject(new Error('Could not get canvas context'))
+          }
+        } catch (error) {
+          reject(error)
+        }
+      }
+      img.onerror = reject
+      img.src = '/images/logo1.png'
+    })
+  }
+
+  // Generate Monthly Revenue Report PDF
+  const generateMonthlyRevenueReport = async () => {
+    const doc = new jsPDF()
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const margin = 20
+    let yPos = margin
+
+    // Load and add logo
+    try {
+      const imgData = await loadLogoImage()
+      doc.addImage(imgData, 'PNG', margin, yPos, 50, 15)
+      yPos += 20
+    } catch (error) {
+      console.error('Error loading logo:', error)
+      yPos += 20
+    }
+
+    // Title
+    doc.setFontSize(20)
+    doc.setFont("helvetica", "bold")
+    doc.text("Monthly Revenue Report", pageWidth / 2, yPos, { align: "center" })
+    yPos += 10
+
+    const currentDate = new Date()
+    const monthName = currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    doc.setFontSize(12)
+    doc.setFont("helvetica", "normal")
+    doc.text(monthName, pageWidth / 2, yPos, { align: "center" })
+    yPos += 20
+
+    // Revenue Summary
+    const totalRevenue = adAccount?.lifetime_spent || 0
+    const currentBalance = adAccount?.balance || 0
+    const totalSpent = parseFloat(totalRevenue.toString())
+
+    doc.setFontSize(14)
+    doc.setFont("helvetica", "bold")
+    doc.text("Revenue Summary", margin, yPos)
+    yPos += 10
+
+    doc.setFontSize(11)
+    doc.setFont("helvetica", "normal")
+    doc.text(`Total Lifetime Spent: $${totalSpent.toFixed(2)}`, margin, yPos)
+    yPos += 8
+    doc.text(`Current Account Balance: $${parseFloat(currentBalance.toString()).toFixed(2)}`, margin, yPos)
+    yPos += 8
+    doc.text(`Active Campaigns: ${campaigns.filter((c: any) => c.status === 'active').length}`, margin, yPos)
+    yPos += 15
+
+    // Recent Transactions
+    if (transactions.length > 0) {
+      doc.setFontSize(14)
+      doc.setFont("helvetica", "bold")
+      doc.text("Recent Transactions", margin, yPos)
+      yPos += 10
+
+      doc.setFontSize(9)
+      doc.setFont("helvetica", "normal")
+      const recentTransactions = transactions.slice(0, 10)
+      recentTransactions.forEach((tx: any) => {
+        if (yPos > 250) {
+          doc.addPage()
+          yPos = margin
+        }
+        const date = new Date(tx.created_at).toLocaleDateString()
+        const amount = parseFloat(tx.amount.toString())
+        doc.text(`${date} - ${tx.type}: $${amount.toFixed(2)}`, margin + 5, yPos)
+        yPos += 6
+      })
+    }
+
+    doc.save(`Monthly_Revenue_Report_${monthName.replace(' ', '_')}.pdf`)
+  }
+
+  // Generate Ad Performance Summary PDF
+  const generateAdPerformanceReport = async () => {
+    const doc = new jsPDF()
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const margin = 20
+    let yPos = margin
+
+    // Load and add logo
+    try {
+      const imgData = await loadLogoImage()
+      doc.addImage(imgData, 'PNG', margin, yPos, 50, 15)
+      yPos += 20
+    } catch (error) {
+      console.error('Error loading logo:', error)
+      yPos += 20
+    }
+
+    // Title
+    doc.setFontSize(20)
+    doc.setFont("helvetica", "bold")
+    doc.text("Ad Performance Summary", pageWidth / 2, yPos, { align: "center" })
+    yPos += 10
+
+    const last30Days = new Date()
+    last30Days.setDate(last30Days.getDate() - 30)
+    doc.setFontSize(12)
+    doc.setFont("helvetica", "normal")
+    doc.text(`Last 30 Days (${last30Days.toLocaleDateString()} - ${new Date().toLocaleDateString()})`, pageWidth / 2, yPos, { align: "center" })
+    yPos += 20
+
+    // Campaign Performance
+    if (campaigns.length > 0) {
+      doc.setFontSize(14)
+      doc.setFont("helvetica", "bold")
+      doc.text("Campaign Performance", margin, yPos)
+      yPos += 10
+
+      campaigns.forEach((campaign: any) => {
+        if (yPos > 250) {
+          doc.addPage()
+          yPos = margin
+        }
+        doc.setFontSize(11)
+        doc.setFont("helvetica", "bold")
+        doc.text(campaign.name || 'Unnamed Campaign', margin, yPos)
+        yPos += 7
+
+        doc.setFontSize(9)
+        doc.setFont("helvetica", "normal")
+        doc.text(`Status: ${campaign.status}`, margin + 5, yPos)
+        yPos += 5
+        doc.text(`Total Clicks: ${campaign.total_clicks || 0}`, margin + 5, yPos)
+        yPos += 5
+        doc.text(`Total Impressions: ${campaign.total_impressions || 0}`, margin + 5, yPos)
+        yPos += 5
+        doc.text(`Total Spent: $${parseFloat((campaign.total_spent || 0).toString()).toFixed(2)}`, margin + 5, yPos)
+        yPos += 5
+        const ctr = campaign.total_impressions > 0 ? ((campaign.total_clicks || 0) / campaign.total_impressions * 100).toFixed(2) : '0.00'
+        doc.text(`CTR: ${ctr}%`, margin + 5, yPos)
+        yPos += 10
+      })
+    } else {
+      doc.setFontSize(11)
+      doc.text("No campaigns found", margin, yPos)
+    }
+
+    doc.save(`Ad_Performance_Summary_${new Date().toISOString().split('T')[0]}.pdf`)
+  }
+
+  // Generate Audience Demographics Report PDF
+  const generateAudienceDemographicsReport = async () => {
+    const doc = new jsPDF()
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const margin = 20
+    let yPos = margin
+
+    // Load and add logo
+    try {
+      const imgData = await loadLogoImage()
+      doc.addImage(imgData, 'PNG', margin, yPos, 50, 15)
+      yPos += 20
+    } catch (error) {
+      console.error('Error loading logo:', error)
+      yPos += 20
+    }
+
+    // Title
+    doc.setFontSize(20)
+    doc.setFont("helvetica", "bold")
+    doc.text("Audience Demographics", pageWidth / 2, yPos, { align: "center" })
+    yPos += 10
+
+    const quarter = Math.floor((new Date().getMonth() + 3) / 3)
+    const year = new Date().getFullYear()
+    doc.setFontSize(12)
+    doc.setFont("helvetica", "normal")
+    doc.text(`Q${quarter} ${year}`, pageWidth / 2, yPos, { align: "center" })
+    yPos += 20
+
+    // Aggregate data from campaigns
+    const totalClicks = campaigns.reduce((sum: number, c: any) => sum + (c.total_clicks || 0), 0)
+    const totalImpressions = campaigns.reduce((sum: number, c: any) => sum + (c.total_impressions || 0), 0)
+
+    doc.setFontSize(14)
+    doc.setFont("helvetica", "bold")
+    doc.text("Overall Statistics", margin, yPos)
+    yPos += 10
+
+    doc.setFontSize(11)
+    doc.setFont("helvetica", "normal")
+    doc.text(`Total Clicks: ${totalClicks}`, margin, yPos)
+    yPos += 8
+    doc.text(`Total Impressions: ${totalImpressions}`, margin, yPos)
+    yPos += 8
+    const overallCTR = totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00'
+    doc.text(`Overall CTR: ${overallCTR}%`, margin, yPos)
+    yPos += 15
+
+    doc.setFontSize(11)
+    doc.text("Note: Detailed geographic and demographic data is collected", margin, yPos)
+    yPos += 6
+    doc.text("through campaign analytics and can be viewed in the Analytics section.", margin, yPos)
+
+    doc.save(`Audience_Demographics_Q${quarter}_${year}.pdf`)
+  }
+  
   const stats = [
     {
       title: "Total Revenue",
@@ -409,7 +887,7 @@ export default function DashboardPage() {
   const getTotalRevenue = () => revenueData.reduce((acc, curr) => acc + curr.revenue, 0)
 
   if (loading) {
-    return (
+  return (
       <DashboardLayout role="mentor">
         <div className="flex items-center justify-center min-h-screen bg-gray-50">
           <div className="text-center">
@@ -427,54 +905,73 @@ export default function DashboardPage() {
       <div className="space-y-6 p-6">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
-          <p className="text-gray-600 mt-1">Welcome back! Here's an overview of your advertising spaces.</p>
+          <p className="text-gray-600 mt-1">Welcome back! Here's an overview of your sessions and advertising.</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <Card className="bg-white border rounded-xl p-6 relative overflow-hidden group hover:-translate-y-1 transition-all duration-300 shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-gray-600">Pending Sessions</CardTitle>
+              <Clock className="h-4 w-4 text-orange-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-gray-900">
+                {sessions.filter(s => !s.is_paid && (s.status === 'scheduled' || !s.status)).length}
+              </div>
+              <p className="text-xs text-gray-600">Awaiting payment</p>
+            </CardContent>
+          </Card>
+          <Card className="bg-white border rounded-xl p-6 relative overflow-hidden group hover:-translate-y-1 transition-all duration-300 shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-gray-600">Total Revenue</CardTitle>
-              <DollarSign className="h-4 w-4 text-blue-600" />
+              <DollarSign className="h-4 w-4 text-green-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">$45,231.89</div>
-              <p className="text-xs text-gray-600">+20.1% from last month</p>
+              <div className="text-2xl font-bold text-gray-900">
+                {(() => {
+                  const totalRevenue = sessions
+                    .filter(s => s.is_paid)
+                    .reduce((sum, s) => sum + parseFloat(s.amount || 0), 0)
+                  return convertedAmounts['total'] || `$${totalRevenue.toFixed(2)}`
+                })()}
+              </div>
+              <p className="text-xs text-gray-600">
+                {sessions.filter(s => s.is_paid).length} paid {sessions.filter(s => s.is_paid).length === 1 ? 'session' : 'sessions'}
+              </p>
             </CardContent>
           </Card>
           <Card className="bg-white border rounded-xl p-6 relative overflow-hidden group hover:-translate-y-1 transition-all duration-300 shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">Active Campaigns</CardTitle>
-              <Megaphone className="h-4 w-4 text-blue-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-gray-900">12</div>
-              <p className="text-xs text-gray-600">+2 new this month</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-white border rounded-xl p-6 relative overflow-hidden group hover:-translate-y-1 transition-all duration-300 shadow-sm">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">Total Influencers</CardTitle>
-              <Users className="h-4 w-4 text-blue-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-gray-900">48</div>
-              <p className="text-xs text-gray-600">+5 new this month</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-white border rounded-xl p-6 relative overflow-hidden group hover:-translate-y-1 transition-all duration-300 shadow-sm">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">Engagement Rate</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-600">Ad Clicks</CardTitle>
               <Activity className="h-4 w-4 text-blue-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">4.2%</div>
-              <p className="text-xs text-gray-600">+0.3% from last month</p>
+              <div className="text-2xl font-bold text-gray-900">
+                {campaigns.reduce((sum: number, c: any) => sum + (c.total_clicks || 0), 0)}
+              </div>
+              <p className="text-xs text-gray-600">
+                {campaigns.filter((c: any) => c.status === 'active').length} active {campaigns.filter((c: any) => c.status === 'active').length === 1 ? 'campaign' : 'campaigns'}
+              </p>
+            </CardContent>
+          </Card>
+          <Card className="bg-white border rounded-xl p-6 relative overflow-hidden group hover:-translate-y-1 transition-all duration-300 shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-gray-600">Ad Balance</CardTitle>
+              <Megaphone className="h-4 w-4 text-purple-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-gray-900">
+                ${adAccount?.balance ? parseFloat(adAccount.balance).toFixed(2) : '0.00'}
+              </div>
+              <p className="text-xs text-gray-600">
+                {adAccount?.lifetime_spent ? `$${parseFloat(adAccount.lifetime_spent).toFixed(2)} spent` : 'No spending yet'}
+              </p>
             </CardContent>
           </Card>
         </div>
 
         <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList className="border-2 border-blue-500/50 bg-transparent h-9 w-[400px] grid grid-cols-3 rounded-none p-1 shadow-[inset_0_0_35px_rgba(59,130,246,0.3)]">
+        <TabsList className="border-2 border-blue-500/50 bg-transparent h-9 w-[600px] grid grid-cols-4 rounded-none p-1 shadow-[inset_0_0_35px_rgba(59,130,246,0.3)]">
           <TabsTrigger 
             value="overview" 
             className="ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:border data-[state=active]:border-orange-500 data-[state=active]:rounded-none data-[state=active]:shadow-[inset_0_0_30px_rgba(34,197,94,0.5)] data-[state=active]:text-white data-[state=active]:bg-transparent hover:bg-transparent px-2 py-[2px] text-sm"
@@ -485,13 +982,19 @@ export default function DashboardPage() {
             value="analytics"
             className="ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:border data-[state=active]:border-orange-500 data-[state=active]:rounded-none data-[state=active]:shadow-[inset_0_0_30px_rgba(34,197,94,0.5)] data-[state=active]:text-white data-[state=active]:bg-transparent hover:bg-transparent px-2 py-[2px] text-sm"
           >
+            Analytics
+          </TabsTrigger>
+          <TabsTrigger 
+            value="sessions"
+            className="ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:border data-[state=active]:border-orange-500 data-[state=active]:rounded-none data-[state=active]:shadow-[inset_0_0_30px_rgba(34,197,94,0.5)] data-[state=active]:text-white data-[state=active]:bg-transparent hover:bg-transparent px-2 py-[2px] text-sm"
+          >
             My Sessions
           </TabsTrigger>
           <TabsTrigger 
-            value="reports"
+            value="tasks"
             className="ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:border data-[state=active]:border-orange-500 data-[state=active]:rounded-none data-[state=active]:shadow-[inset_0_0_30px_rgba(34,197,94,0.5)] data-[state=active]:text-white data-[state=active]:bg-transparent hover:bg-transparent px-2 py-[2px] text-sm"
           >
-            Reports
+            Tasks
           </TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
@@ -504,13 +1007,25 @@ export default function DashboardPage() {
               <CardContent className="flex gap-6">
                         <div className="space-y-2 w-1/3 border-r border-gray-200 pr-4">
                   {revenueData.map((data, index) => {
-                    const isFutureMonth = data.revenue === 0;
+                    const currentDate = new Date()
+                    const currentMonthIndex = currentDate.getMonth()
+                    const currentYear = currentDate.getFullYear()
+                    const monthIndex = data.monthIndex
+                    const monthYear = data.year
+                    
+                    // Check if this is a future month
+                    const isFutureMonth = monthYear > currentYear || 
+                      (monthYear === currentYear && monthIndex > currentMonthIndex)
                     const isPastMonth = !isFutureMonth && data.month !== selectedMonth.month;
                     return (
                       <div key={data.month} className="relative group">
                         {isFutureMonth && (
                           <div className="absolute -right-2 translate-x-full top-1/2 -translate-y-1/2 bg-white text-gray-700 text-xs rounded-lg px-3 py-2 w-48 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-10 border border-gray-200 shadow-lg">
-                            We're currently in March. This is a future month.
+                            {(() => {
+                              const currentDate = new Date()
+                              const currentMonthName = currentDate.toLocaleDateString('en-US', { month: 'long' })
+                              return `We're currently in ${currentMonthName}. This is a future month.`
+                            })()}
                           </div>
                         )}
                         {isPastMonth && (
@@ -605,173 +1120,473 @@ export default function DashboardPage() {
             </Card>
             <Card className="lg:col-span-3 bg-white border rounded-xl shadow-sm">
               <CardHeader>
-                <CardTitle className="text-gray-900">Top Performing Ad Spaces</CardTitle>
-                <CardDescription className="text-gray-600">Based on revenue this month</CardDescription>
+                <CardTitle className="text-gray-900">Advertising Account</CardTitle>
+                <CardDescription className="text-gray-600">Add funds to your account and pay per click for advertising</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="flex min-h-[300px] w-full items-center justify-center">
-                  <DisplayCards cards={topPerformingAdSpaces} />
+              <CardContent className="space-y-6">
+                {/* Account Balance Section */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600">Account Balance</span>
+                      <DollarSign className="h-4 w-4 text-green-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-gray-900">
+                      ${adAccount?.balance ? parseFloat(adAccount.balance).toFixed(2) : '0.00'}
+                    </p>
+                    <Button 
+                      size="sm" 
+                      className="w-full mt-3 bg-gradient-to-r from-blue-500 to-green-500 hover:from-blue-600 hover:to-green-600 text-white"
+                      asChild
+                    >
+                      <Link href="/dashboard/advertising">
+                        Add Funds
+                      </Link>
+                    </Button>
                   </div>
-                </CardContent>
-                <CardFooter>
-                <Button 
-                  className="w-full bg-gradient-to-r from-blue-500/80 to-green-500/80 hover:from-blue-500/90 hover:to-green-500/90 transition-all duration-300 text-white border-0 shadow-lg shadow-blue-500/20" 
-                  asChild
-                >
-                  <Link href="/dashboard/analytics" className="flex items-center justify-center">
-                      View detailed analytics
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </Link>
-                  </Button>
-                </CardFooter>
-              </Card>
+                  <div className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600">Lifetime Spent</span>
+                      <TrendingUp className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-gray-900">
+                      ${adAccount?.lifetime_spent ? parseFloat(adAccount.lifetime_spent).toFixed(2) : '0.00'}
+                    </p>
+                  </div>
+                  <div className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-600">Cost Per Click</span>
+                      <MousePointer className="h-4 w-4 text-purple-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-gray-900">
+                      ${adAccount?.cost_per_click ? parseFloat(adAccount.cost_per_click).toFixed(2) : '0.50'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* How It Works */}
+                <div className="border-t border-gray-200 pt-4">
+                  <h4 className="font-semibold text-gray-900 mb-4">How It Works</h4>
+                  <div className="space-y-4">
+                    <div className="flex gap-4">
+                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
+                        1
+                      </div>
+                      <div>
+                        <h5 className="font-medium text-gray-900 mb-1">Add Funds</h5>
+                        <p className="text-sm text-gray-600">Deposit money into your advertising account. Minimum deposit is $5.00.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
             </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <Card className="bg-white border rounded-xl shadow-sm">
                 <CardHeader>
-                  <CardTitle className="text-gray-900">Recent Requests</CardTitle>
-                  <CardDescription className="text-gray-600">You have 5 pending requests</CardDescription>
+                  <CardTitle className="text-gray-900">Session Requests</CardTitle>
+                  <CardDescription className="text-gray-600">
+                    {(() => {
+                      const now = new Date()
+                      const seventyTwoHoursAgo = new Date(now.getTime() - 72 * 60 * 60 * 1000)
+                      const recentRequests = sessions.filter(s => {
+                        const sessionDate = new Date(`${s.date}T${s.time}`)
+                        return !s.is_paid && sessionDate >= seventyTwoHoursAgo && sessionDate <= now
+                      })
+                      return `You have ${recentRequests.length} pending ${recentRequests.length === 1 ? 'request' : 'requests'} (last 72 hours)`
+                    })()}
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    <div className="flex items-center">
-                      <div className="w-full flex items-center gap-2">
-                        <div className="h-8 w-8 rounded-full bg-muted" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">TechGadgets Inc.</p>
-                          <p className="text-xs text-muted-foreground">Tech Blog Banner • 2 hours ago</p>
+                  {(() => {
+                    const now = new Date()
+                    const seventyTwoHoursAgo = new Date(now.getTime() - 72 * 60 * 60 * 1000)
+                    const recentRequests = sessions
+                      .filter(s => {
+                        const sessionDate = new Date(`${s.date}T${s.time}`)
+                        return !s.is_paid && sessionDate >= seventyTwoHoursAgo && sessionDate <= now
+                      })
+                      .sort((a, b) => {
+                        const dateA = new Date(`${a.date}T${a.time}`)
+                        const dateB = new Date(`${b.date}T${b.time}`)
+                        return dateB.getTime() - dateA.getTime()
+                      })
+                      .slice(0, 5)
+
+                    if (recentRequests.length === 0) {
+                      return (
+                        <div className="text-center py-8">
+                          <CalendarIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                          <p className="text-gray-600 mb-2">No session requests</p>
+                          <p className="text-sm text-gray-500">New session requests from the last 72 hours will appear here</p>
                         </div>
-                        <Button size="sm" variant="outline">
-                          View
-                        </Button>
+                      )
+                    }
+
+                    return (
+                      <div className="space-y-4">
+                        {recentRequests.map((session) => {
+                          const sessionDate = new Date(`${session.date}T${session.time}`)
+                          const hoursAgo = Math.floor((now.getTime() - sessionDate.getTime()) / (1000 * 60 * 60))
+                          const timeAgo = hoursAgo < 1 
+                            ? 'Just now' 
+                            : hoursAgo === 1 
+                            ? '1 hour ago' 
+                            : hoursAgo < 24
+                            ? `${hoursAgo} hours ago`
+                            : `${Math.floor(hoursAgo / 24)} day${Math.floor(hoursAgo / 24) > 1 ? 's' : ''} ago`
+
+                          return (
+                            <div key={session.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:shadow-md transition-shadow">
+                              <div className="flex-shrink-0">
+                                <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold">
+                                  {session.topic.charAt(0).toUpperCase()}
+                                </div>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-gray-900 truncate">{session.topic}</p>
+                                <p className="text-xs text-gray-600">
+                                  {new Date(session.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at {new Date(`2000-01-01T${session.time}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} • {timeAgo}
+                                </p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                  {convertedAmounts[session.id] || `$${parseFloat(session.amount || 0).toFixed(2)}`} • {session.duration} min
+                                </p>
+                              </div>
+                              <Button 
+                                size="sm" 
+                                className="bg-gradient-to-r from-blue-500 to-green-500 hover:from-blue-600 hover:to-green-600 text-white"
+                                onClick={() => {
+                                  // Navigate to sessions page or open accept modal
+                                  window.location.href = `/dashboard/tutor/sessions`
+                                }}
+                              >
+                                Accept Session
+                              </Button>
+                            </div>
+                          )
+                        })}
                       </div>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="w-full flex items-center gap-2">
-                        <div className="h-8 w-8 rounded-full bg-muted" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">SaaS Platform Pro</p>
-                          <p className="text-xs text-muted-foreground">Newsletter • 5 hours ago</p>
-                        </div>
-                        <Button size="sm" variant="outline">
-                          View
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="w-full flex items-center gap-2">
-                        <div className="h-8 w-8 rounded-full bg-muted" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">CloudCompute Ltd</p>
-                          <p className="text-xs text-muted-foreground">Podcast Ad • 1 day ago</p>
-                        </div>
-                        <Button size="sm" variant="outline">
-                          View
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
+                    )
+                  })()}
                 </CardContent>
                 <CardFooter>
                 <Button 
                   className="w-full bg-gradient-to-r from-blue-500/80 to-green-500/80 hover:from-blue-500/90 hover:to-green-500/90 transition-all duration-300 text-white border-0 shadow-lg shadow-blue-500/20" 
                   asChild
                 >
-                  <Link href="/dashboard/requests" className="flex items-center justify-center">
-                      View all requests
+                  <Link href="/dashboard/tutor/sessions" className="flex items-center justify-center">
+                      View all sessions
                       <ArrowRight className="ml-2 h-4 w-4" />
                     </Link>
                   </Button>
                 </CardFooter>
-              </Card>
-            <Card className="bg-white border rounded-xl shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-gray-900">Recent Messages</CardTitle>
-                  <CardDescription className="text-gray-600">You have 3 unread messages</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div className="flex items-center">
-                      <div className="w-full flex items-center gap-2">
-                        <div className="h-8 w-8 rounded-full bg-muted" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">Sarah Johnson</p>
-                          <p className="text-xs text-muted-foreground">Question about banner specs • 1 hour ago</p>
-                        </div>
-                        <div className="h-2 w-2 rounded-full bg-primary"></div>
-                      </div>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="w-full flex items-center gap-2">
-                        <div className="h-8 w-8 rounded-full bg-muted" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">Michael Chen</p>
-                          <p className="text-xs text-muted-foreground">Campaign renewal • 3 hours ago</p>
-                        </div>
-                        <div className="h-2 w-2 rounded-full bg-primary"></div>
-                      </div>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="w-full flex items-center gap-2">
-                        <div className="h-8 w-8 rounded-full bg-muted" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">Jessica Williams</p>
-                          <p className="text-xs text-muted-foreground">Payment confirmation • 5 hours ago</p>
-                        </div>
-                        <div className="h-2 w-2 rounded-full bg-primary"></div>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-                <CardFooter>
-                <Button 
-                  className="w-full bg-gradient-to-r from-blue-500/80 to-green-500/80 hover:from-blue-500/90 hover:to-green-500/90 transition-all duration-300 text-white border-0 shadow-lg shadow-blue-500/20" 
-                  asChild
-                >
-                  <Link href="/dashboard/messages" className="flex items-center justify-center">
-                      View all messages
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </Link>
-                  </Button>
-                </CardFooter>
-              </Card>
-            <Card className="bg-white border rounded-xl shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-gray-900">Quick Actions</CardTitle>
-                  <CardDescription className="text-gray-600">Common tasks and operations</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <Button variant="outline" className="w-full justify-start" asChild>
-                      <Link href="/dashboard/ad-spaces/new">
-                        <Globe className="mr-2 h-4 w-4" />
-                        Add New Ad Space
-                      </Link>
-                    </Button>
-                    <Button variant="outline" className="w-full justify-start" asChild>
-                      <Link href="/dashboard/earnings/withdraw">
-                        <DollarSign className="mr-2 h-4 w-4" />
-                        Withdraw Earnings
-                      </Link>
-                    </Button>
-                    <Button variant="outline" className="w-full justify-start" asChild>
-                      <Link href="/dashboard/analytics/export">
-                        <BarChart3 className="mr-2 h-4 w-4" />
-                        Export Analytics
-                      </Link>
-                    </Button>
-                    <Button variant="outline" className="w-full justify-start" asChild>
-                      <Link href="/dashboard/settings">
-                        <Users className="mr-2 h-4 w-4" />
-                        Update Profile
-                      </Link>
-                    </Button>
-                  </div>
-                </CardContent>
               </Card>
             </div>
           </TabsContent>
           <TabsContent value="analytics" className="space-y-4">
+            {/* Analytics Overview Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <Card className="bg-white border rounded-xl shadow-sm">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium text-gray-600">Total Ad Clicks</CardTitle>
+                  <MousePointer className="h-4 w-4 text-blue-600" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-gray-900">
+                    {campaigns.reduce((sum: number, c: any) => sum + (c.total_clicks || 0), 0)}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {adClicks.length} detailed records
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-white border rounded-xl shadow-sm">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium text-gray-600">Total Impressions</CardTitle>
+                  <Eye className="h-4 w-4 text-purple-600" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-gray-900">
+                    {campaigns.reduce((sum: number, c: any) => sum + (c.total_impressions || 0), 0)}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {adImpressions.length} detailed records
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-white border rounded-xl shadow-sm">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium text-gray-600">Click-Through Rate</CardTitle>
+                  <TrendingUp className="h-4 w-4 text-green-600" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-gray-900">
+                    {(() => {
+                      const totalClicks = campaigns.reduce((sum: number, c: any) => sum + (c.total_clicks || 0), 0)
+                      const totalImpressions = campaigns.reduce((sum: number, c: any) => sum + (c.total_impressions || 0), 0)
+                      return totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00'
+                    })()}%
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Clicks per 100 impressions
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-white border rounded-xl shadow-sm">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium text-gray-600">Paid Students</CardTitle>
+                  <Users className="h-4 w-4 text-green-600" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-gray-900">
+                    {(() => {
+                      const paidSessions = sessions.filter(s => s.is_paid && s.learner_name && s.learner_name !== 'TBD')
+                      const uniqueStudents = new Set(paidSessions.map(s => s.learner_email).filter(Boolean))
+                      return uniqueStudents.size
+                    })()}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {sessions.filter(s => s.is_paid).length} paid sessions
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Conversion Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card className="bg-white border rounded-xl shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium text-gray-900">Conversion Rate</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-gray-900">
+                    {(() => {
+                      const totalSessions = sessions.length
+                      const paidSessions = sessions.filter(s => s.is_paid).length
+                      return totalSessions > 0 ? ((paidSessions / totalSessions) * 100).toFixed(1) : '0.0'
+                    })()}%
+                  </div>
+                  <p className="text-xs text-gray-600 mt-2">
+                    {sessions.filter(s => s.is_paid).length} of {sessions.length} sessions paid
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-white border rounded-xl shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium text-gray-900">Revenue per Click</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-gray-900">
+                    {(() => {
+                      const totalClicks = campaigns.reduce((sum: number, c: any) => sum + (c.total_clicks || 0), 0)
+                      const totalRevenue = sessions.filter(s => s.is_paid).reduce((sum, s) => sum + parseFloat(s.amount || 0), 0)
+                      return totalClicks > 0 ? `$${(totalRevenue / totalClicks).toFixed(2)}` : '$0.00'
+                    })()}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-2">
+                    Average revenue generated per click
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-white border rounded-xl shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium text-gray-900">Cost per Acquisition</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-gray-900">
+                    {(() => {
+                      const totalSpent = campaigns.reduce((sum: number, c: any) => sum + parseFloat(c.total_spent || 0), 0)
+                      const paidSessions = sessions.filter(s => s.is_paid).length
+                      return paidSessions > 0 ? `$${(totalSpent / paidSessions).toFixed(2)}` : '$0.00'
+                    })()}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-2">
+                    Ad spend per paid session
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Geographic Analytics */}
+            <Card className="bg-white border rounded-xl shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-gray-900">Geographic Analytics</CardTitle>
+                <CardDescription className="text-gray-600">Clicks and impressions by location</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {analyticsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-700 mb-3">Top Countries (Clicks)</h4>
+                      <div className="space-y-2">
+                        {(() => {
+                          const countryClicks: Record<string, number> = {}
+                          adClicks.forEach(click => {
+                            if (click.country) {
+                              countryClicks[click.country] = (countryClicks[click.country] || 0) + 1
+                            }
+                          })
+                          const sorted = Object.entries(countryClicks)
+                            .sort(([, a], [, b]) => b - a)
+                            .slice(0, 5)
+                          return sorted.length > 0 ? (
+                            sorted.map(([country, count]) => (
+                              <div key={country} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                                <span className="text-sm text-gray-700">{country}</span>
+                                <span className="text-sm font-semibold text-gray-900">{count}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-sm text-gray-500">No geographic data available</p>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-700 mb-3">Top Countries (Impressions)</h4>
+                      <div className="space-y-2">
+                        {(() => {
+                          const countryImpressions: Record<string, number> = {}
+                          adImpressions.forEach(impression => {
+                            if (impression.country) {
+                              countryImpressions[impression.country] = (countryImpressions[impression.country] || 0) + 1
+                            }
+                          })
+                          const sorted = Object.entries(countryImpressions)
+                            .sort(([, a], [, b]) => b - a)
+                            .slice(0, 5)
+                          return sorted.length > 0 ? (
+                            sorted.map(([country, count]) => (
+                              <div key={country} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                                <span className="text-sm text-gray-700">{country}</span>
+                                <span className="text-sm font-semibold text-gray-900">{count}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-sm text-gray-500">No geographic data available</p>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Students Who Paid */}
+            <Card className="bg-white border rounded-xl shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-gray-900">Students Who Paid for Sessions</CardTitle>
+                <CardDescription className="text-gray-600">List of students who have completed payment</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {sessionsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {(() => {
+                      const paidSessions = sessions.filter(s => s.is_paid && s.learner_name && s.learner_name !== 'TBD')
+                      const uniqueStudents = new Map()
+                      paidSessions.forEach(session => {
+                        if (session.learner_email && !uniqueStudents.has(session.learner_email)) {
+                          uniqueStudents.set(session.learner_email, {
+                            name: session.learner_name,
+                            email: session.learner_email,
+                            sessions: []
+                          })
+                        }
+                        if (session.learner_email) {
+                          uniqueStudents.get(session.learner_email).sessions.push({
+                            topic: session.topic,
+                            date: session.date,
+                            amount: session.amount
+                          })
+                        }
+                      })
+                      const studentsArray = Array.from(uniqueStudents.values())
+                      return studentsArray.length > 0 ? (
+                        studentsArray.map((student, index) => (
+                          <div key={index} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-3 mb-2">
+                                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold">
+                                    {student.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <h4 className="font-semibold text-gray-900">{student.name}</h4>
+                                    <p className="text-sm text-gray-600">{student.email}</p>
+                                  </div>
+                                </div>
+                                <div className="ml-13 mt-2">
+                                  <p className="text-xs text-gray-500 mb-1">
+                                    {student.sessions.length} {student.sessions.length === 1 ? 'session' : 'sessions'} booked
+                                  </p>
+                                  <div className="space-y-1">
+                                    {student.sessions.map((s: any, idx: number) => (
+                                      <div key={idx} className="text-xs text-gray-600">
+                                        • {s.topic} - ${parseFloat(s.amount || 0).toFixed(2)} ({new Date(s.date).toLocaleDateString()})
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                              <Badge className="bg-green-100 text-green-700 border-green-200">
+                                Paid
+                              </Badge>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-center py-12">
+                          <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                          <p className="text-gray-600">No paid students yet</p>
+                          <p className="text-sm text-gray-500 mt-1">Students who pay for sessions will appear here</p>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Recent Activity */}
+            <Card className="bg-white border rounded-xl shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-gray-900">Recent Ad Activity</CardTitle>
+                <CardDescription className="text-gray-600">Latest clicks and impressions</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {adClicks.slice(0, 10).map((click, index) => (
+                    <div key={click.id || index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <MousePointer className="h-4 w-4 text-blue-600" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Ad Click</p>
+                          <p className="text-xs text-gray-500">
+                            {click.country || 'Unknown'} • {click.city || 'Unknown'} • {new Date(click.clicked_at).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-sm font-semibold text-gray-900">${parseFloat(click.click_cost || 0).toFixed(2)}</span>
+                    </div>
+                  ))}
+                  {adClicks.length === 0 && (
+                    <p className="text-sm text-gray-500 text-center py-4">No ad clicks recorded yet</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="sessions" className="space-y-4">
             <Card className="bg-white border rounded-xl shadow-sm">
               <CardHeader>
                 <CardTitle className="text-gray-900">My Sessions</CardTitle>
@@ -819,9 +1634,27 @@ export default function DashboardPage() {
                           <div className="flex items-start gap-4">
                             {/* Profile Section */}
                             <div className="flex-shrink-0">
-                              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-xl">
-                                {userData?.full_name?.charAt(0)?.toUpperCase() || 'M'}
-                              </div>
+                              {session.learner_name && session.learner_name !== 'TBD' ? (
+                                <img
+                                  src={`https://ui-avatars.com/api/?name=${encodeURIComponent(session.learner_name)}&background=3B82F6&color=fff&size=128`}
+                                  alt={session.learner_name}
+                                  className="w-16 h-16 rounded-full object-cover border-2 border-blue-200"
+                                  onError={(e) => {
+                                    const target = e.target as HTMLImageElement
+                                    target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(session.learner_name)}&background=3B82F6&color=fff&size=128`
+                                  }}
+                                />
+                              ) : (
+                                <img
+                                  src={mentorData?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(mentorData?.name || userData?.full_name || 'M')}&background=3B82F6&color=fff&size=128`}
+                                  alt={mentorData?.name || userData?.full_name || 'Mentor'}
+                                  className="w-16 h-16 rounded-full object-cover border-2 border-blue-200"
+                                  onError={(e) => {
+                                    const target = e.target as HTMLImageElement
+                                    target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(mentorData?.name || userData?.full_name || 'M')}&background=3B82F6&color=fff&size=128`
+                                  }}
+                                />
+                              )}
                             </div>
 
                             {/* Content Section */}
@@ -842,9 +1675,9 @@ export default function DashboardPage() {
                                       <span className="px-3 py-1 text-xs font-semibold rounded-full bg-orange-100 text-orange-700 border border-orange-200">
                                         Awaiting Payment
                                       </span>
-                                    )}
-                                  </div>
-                                </div>
+                                )}
+                              </div>
+                            </div>
                               </div>
 
                               {/* Student Info */}
@@ -866,8 +1699,8 @@ export default function DashboardPage() {
                                 <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                                   <p className="text-xs font-semibold text-gray-600 mb-1">No student assigned yet</p>
                                   <p className="text-xs text-gray-500">Waiting for a student to book this session</p>
-                                </div>
-                              )}
+                            </div>
+                          )}
 
                               {/* Session Details */}
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
@@ -881,39 +1714,72 @@ export default function DashboardPage() {
                                       year: 'numeric',
                                     })}
                                   </span>
-                                </div>
+                            </div>
                                 <div className="flex items-center gap-2 text-gray-700">
                                   <Clock className="h-4 w-4 text-blue-600" />
-                                  <span className="text-sm font-medium">
+                            <span className="text-sm font-medium">
                                     {new Date(`2000-01-01T${session.time}`).toLocaleTimeString('en-US', {
                                       hour: 'numeric',
                                       minute: '2-digit',
                                       hour12: true,
                                     })} • {session.duration} min
-                                  </span>
-                                </div>
+                            </span>
+                        </div>
                                 <div className="flex items-center gap-2 text-gray-700">
-                                  <DollarSign className="h-4 w-4 text-blue-600" />
-                                  <span className="text-sm font-semibold">R {parseFloat(session.amount || 0).toFixed(2)}</span>
-                                </div>
+                                  <span className="text-sm font-semibold">
+                                    {convertedAmounts[session.id] || `$${parseFloat(session.amount || 0).toFixed(2)}`}
+                                  </span>
+                  </div>
                                 {session.meeting_type && (
                                   <div className="flex items-center gap-2 text-gray-700">
                                     <Video className="h-4 w-4 text-blue-600" />
                                     <span className="text-sm capitalize">{session.meeting_type.replace('-', ' ')}</span>
-                                  </div>
+                      </div>
                                 )}
-                              </div>
+                          </div>
 
                               {/* Notes */}
                               {session.notes && (
                                 <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                                   <p className="text-xs font-semibold text-gray-700 mb-1">Notes</p>
                                   <p className="text-sm text-gray-600">{session.notes}</p>
-                                </div>
+                              </div>
                               )}
 
-                              {/* Join Meeting Button - Only accessible when meeting starts */}
-                              {session.meeting_link && (
+                              {/* Meeting Link - Only show if session is paid AND student is assigned */}
+                              {session.meeting_link && 
+                               session.is_paid === true && 
+                               session.learner_name && 
+                               session.learner_name !== 'TBD' && 
+                               session.learner_name.trim() !== '' && 
+                               session.learner_email && (
+                                <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-semibold text-gray-700 mb-1">Meeting Link</p>
+                                      <p className="text-sm text-gray-600 truncate">{session.meeting_link}</p>
+                            </div>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(session.meeting_link)
+                                      }}
+                                      className="ml-2 flex-shrink-0"
+                                    >
+                                      <Copy className="h-4 w-4" />
+                                    </Button>
+                            </div>
+                          </div>
+                              )}
+
+                              {/* Join Meeting Button - Only accessible when meeting starts and session is paid AND student is assigned */}
+                              {session.meeting_link && 
+                               session.is_paid === true && 
+                               session.learner_name && 
+                               session.learner_name !== 'TBD' && 
+                               session.learner_name.trim() !== '' && 
+                               session.learner_email && (
                                 <div className="mt-4 pt-4 border-t border-gray-200">
                                   {isMeetingActive ? (
                                     <a
@@ -930,17 +1796,17 @@ export default function DashboardPage() {
                                     <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-500 rounded-lg font-medium text-sm">
                                       <Clock className="h-4 w-4" />
                                       Meeting starts {new Date(sessionDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at {new Date(`2000-01-01T${session.time}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
-                                    </div>
+                        </div>
                                   ) : (
                                     <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-500 rounded-lg font-medium text-sm">
                                       <Clock className="h-4 w-4" />
                                       Meeting has ended
-                                    </div>
+                      </div>
                                   )}
-                                </div>
+                    </div>
                               )}
-                            </div>
-                          </div>
+                  </div>
+                </div>
                         </motion.div>
                       )
                     })}
@@ -949,88 +1815,160 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
         </TabsContent>
-        <TabsContent value="reports" className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Card className="relative overflow-hidden bg-gradient-to-br from-blue-950/30 to-blue-900/10 border-blue-500/20 flex-1 mr-4">
-              <div className="absolute inset-0 h-full w-full">
-                <Meteors number={20} />
-              </div>
-              <CardHeader className="relative z-10">
-                <CardTitle className="text-gray-900">Reports</CardTitle>
-                <CardDescription className="text-gray-600">Download and view detailed reports</CardDescription>
-              </CardHeader>
-              <CardContent className="relative z-10">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">Monthly Revenue Report</p>
-                      <p className="text-sm text-muted-foreground">August 2023</p>
-                    </div>
-                    <Button size="sm">Download</Button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">Ad Performance Summary</p>
-                      <p className="text-sm text-muted-foreground">Last 30 days</p>
-                    </div>
-                    <Button size="sm">Download</Button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">Audience Demographics</p>
-                      <p className="text-sm text-muted-foreground">Q3 2023</p>
-                    </div>
-                    <Button size="sm">Download</Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="w-[300px] bg-gradient-to-br from-blue-950/30 to-blue-900/10 border-blue-500/20">
+        <TabsContent value="tasks" className="space-y-4">
+          <Card className="bg-white border rounded-xl shadow-sm">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-gray-900">
-                  <AnimatedEmail />
-                  Email Reports
-                </CardTitle>
-                <CardDescription className="text-gray-600">Receive reports directly in your inbox</CardDescription>
+              <CardTitle className="text-gray-900">Tasks & Grading</CardTitle>
+              <CardDescription className="text-gray-600">View and grade student task submissions</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">
-                      Get <span className="text-green-400">Adsy</span> to send you reports
-                    </p>
-                    <Switch className="data-[state=checked]:bg-orange-500 data-[state=unchecked]:bg-orange-500/20 data-[state=checked]:hover:bg-orange-500/90 data-[state=unchecked]:hover:bg-orange-500/30 [&>span]:data-[state=checked]:bg-green-500 [&>span]:data-[state=unchecked]:bg-red-500" />
+              {tasksLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+                    </div>
+              ) : tasks.length === 0 ? (
+                <div className="text-center py-12">
+                  <ClipboardList className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                  <p className="text-lg font-medium text-gray-600 mb-2">No tasks yet</p>
+                  <p className="text-sm text-gray-500">Tasks you create will appear here for grading</p>
                   </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" className="w-full justify-between">
-                        Select Frequency
-                        <ChevronDown className="h-4 w-4 opacity-50" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent className="w-[200px]">
-                      <DropdownMenuItem>
-                        Per Advertisement
-                      </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        Every 10 Days
-                      </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        Monthly
-                      </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        Quarterly
-                      </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        Every 6 Months
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+              ) : (
+                <div className="space-y-4">
+                  {tasks.map((task: any) => {
+                    const dueDate = new Date(task.due_date)
+                    
+                    return (
+                      <motion.div
+                        key={task.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow bg-white"
+                      >
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex-1">
+                            <h3 className="text-xl font-bold text-gray-900 mb-2">{task.title}</h3>
+                            <div className="flex items-center gap-2 flex-wrap mb-2">
+                              <Badge className={
+                                task.status === 'graded' ? 'bg-green-100 text-green-700 border-green-200' :
+                                task.status === 'submitted' ? 'bg-purple-100 text-purple-700 border-purple-200' :
+                                task.status === 'assigned' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                                'bg-gray-100 text-gray-700 border-gray-200'
+                              }>
+                                {task.status === 'graded' && <CheckCircle2 className="h-3 w-3 mr-1" />}
+                                {task.status.charAt(0).toUpperCase() + task.status.slice(1)}
+                              </Badge>
+                              {task.session && (
+                                <Badge variant="outline">{task.session.topic}</Badge>
+                              )}
+                    </div>
+                  </div>
+                          {task.status === 'graded' && task.score !== null && (
+                            <div className="text-right">
+                              <div className="text-2xl font-bold text-green-600">
+                                {task.score}/{task.max_score}
+                    </div>
+                              <div className="text-sm text-gray-500">
+                                {((task.score / task.max_score) * 100).toFixed(1)}%
+                  </div>
                 </div>
+                          )}
+          </div>
+
+                        <div className="space-y-3 mb-4">
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.description}</p>
+                          
+                          {task.instructions && (
+                            <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                              <p className="text-xs font-semibold text-blue-900 mb-1">Instructions:</p>
+                              <p className="text-sm text-blue-800 whitespace-pre-wrap">{task.instructions}</p>
+              </div>
+                          )}
+
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div className="flex items-center gap-2 text-gray-600">
+                              <CalendarIcon className="h-4 w-4" />
+                              <span>Due: {dueDate.toLocaleDateString()}</span>
+                    </div>
+                            {task.learner && (
+                              <div className="flex items-center gap-2 text-gray-600">
+                                <User className="h-4 w-4" />
+                                <span>{task.learner.full_name || task.learner.email}</span>
+                  </div>
+                            )}
+                    </div>
+
+                          {task.submission_text && (
+                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                              <p className="text-xs font-semibold text-gray-700 mb-1">Student Submission:</p>
+                              <p className="text-sm text-gray-600 whitespace-pre-wrap">{task.submission_text}</p>
+                              {task.submission_file_url && (
+                                <a
+                                  href={task.submission_file_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline mt-2"
+                                >
+                                  <Download className="h-3 w-3" />
+                                  {task.submission_file_name || 'Download file'}
+                                </a>
+                              )}
+                              {task.submitted_at && (
+                                <p className="text-xs text-gray-500 mt-2">
+                                  Submitted: {new Date(task.submitted_at).toLocaleString()}
+                                </p>
+                              )}
+                  </div>
+                          )}
+
+                          {task.status === 'graded' && task.feedback && (
+                            <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+                              <p className="text-xs font-semibold text-green-900 mb-1">Your Feedback:</p>
+                              <p className="text-sm text-green-800 whitespace-pre-wrap">{task.feedback}</p>
+                    </div>
+                          )}
+                  </div>
+
+                        <div className="flex justify-end gap-2 pt-4 border-t">
+                          {task.status === 'submitted' && (
+                            <Button
+                              onClick={() => {
+                                setSelectedTask(task)
+                                setGradeData({
+                                  score: task.max_score.toString(),
+                                  feedback: ""
+                                })
+                                setIsGradeModalOpen(true)
+                              }}
+                            >
+                              <Star className="h-4 w-4 mr-2" />
+                              Grade Task
+                            </Button>
+                          )}
+                          {task.status === 'graded' && (
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedTask(task)
+                                setGradeData({
+                                  score: task.score?.toString() || task.max_score.toString(),
+                                  feedback: task.feedback || ""
+                                })
+                                setIsGradeModalOpen(true)
+                              }}
+                            >
+                              <Star className="h-4 w-4 mr-2" />
+                              Update Grade
+                            </Button>
+                          )}
+                </div>
+                      </motion.div>
+                    )
+                  })}
+                </div>
+              )}
               </CardContent>
             </Card>
-          </div>
-          </TabsContent>
+        </TabsContent>
         </Tabs>
 
       {/* Debug: Test button to manually open modal */}
@@ -1097,7 +2035,124 @@ export default function DashboardPage() {
         userEmail={userData?.email || ''}
         userName={userData?.full_name || userData?.name || ''}
       />
-      </div>
+
+      {/* Grade Task Modal */}
+      <Dialog open={isGradeModalOpen} onOpenChange={setIsGradeModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Grade Task: {selectedTask?.title}</DialogTitle>
+            <DialogDescription>
+              Provide a score and feedback for the student's submission
+            </DialogDescription>
+          </DialogHeader>
+                <div className="space-y-4">
+            <div>
+              <Label htmlFor="score">Score (out of {selectedTask?.max_score || 100})</Label>
+              <Input
+                id="score"
+                type="number"
+                value={gradeData.score}
+                onChange={(e) => setGradeData({ ...gradeData, score: e.target.value })}
+                min="0"
+                max={selectedTask?.max_score || 100}
+                step="0.01"
+              />
+                  </div>
+            <div>
+              <Label htmlFor="feedback">Feedback</Label>
+              <Textarea
+                id="feedback"
+                value={gradeData.feedback}
+                onChange={(e) => setGradeData({ ...gradeData, feedback: e.target.value })}
+                placeholder="Provide detailed feedback for the student..."
+                rows={8}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsGradeModalOpen(false)
+                  setSelectedTask(null)
+                  setGradeData({ score: "", feedback: "" })
+                }}
+                disabled={grading}
+              >
+                Cancel
+                      </Button>
+              <Button
+                onClick={async () => {
+                  if (!selectedTask) return
+                  if (!gradeData.score || parseFloat(gradeData.score) < 0 || parseFloat(gradeData.score) > (selectedTask.max_score || 100)) {
+                    toast.error('Please enter a valid score')
+                    return
+                  }
+
+                  setGrading(true)
+                  try {
+                    const { error } = await supabase
+                      .from('tasks')
+                      .update({
+                        score: parseFloat(gradeData.score),
+                        feedback: gradeData.feedback || null,
+                        graded_at: new Date().toISOString(),
+                        graded_by: mentorData?.id,
+                        status: 'graded'
+                      })
+                      .eq('id', selectedTask.id)
+
+                    if (error) throw error
+
+                    toast.success('Task graded successfully!')
+                    setIsGradeModalOpen(false)
+                    setSelectedTask(null)
+                    setGradeData({ score: "", feedback: "" })
+                    
+                    // Refresh tasks
+                    const { data, error: fetchError } = await supabase
+                      .from('tasks')
+                      .select(`
+                        *,
+                        session:sessions (
+                          topic,
+                          date,
+                          time
+                        ),
+                        learner:users!tasks_learner_id_fkey (
+                          email,
+                          full_name
+                        )
+                      `)
+                      .eq('mentor_id', mentorData.id)
+                      .order('created_at', { ascending: false })
+
+                    if (!fetchError) setTasks(data || [])
+                  } catch (error: any) {
+                    console.error('Error grading task:', error)
+                    toast.error(error.message || 'Failed to grade task')
+                  } finally {
+                    setGrading(false)
+                  }
+                }}
+                disabled={grading}
+              >
+                {grading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Grading...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Submit Grade
+                  </>
+                )}
+              </Button>
+                </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
     </DashboardLayout>
   )
 }

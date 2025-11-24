@@ -81,7 +81,12 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
         window.location.href = '/dashboard/learner'
       }, 100)
     } catch (error: any) {
-      setError(error.message || "An error occurred during sign in")
+      let errorMessage = error.message || "An error occurred during sign in"
+      // Replace "Failed to fetch" with a more user-friendly message
+      if (errorMessage.includes("Failed to fetch") || errorMessage.includes("fetch")) {
+        errorMessage = "Check your internet connection"
+      }
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -171,7 +176,12 @@ export function SignInModal({ isOpen, onClose, onSignUp }: SignInModalProps) {
       }, 100)
     } catch (error: any) {
       console.error('Google sign-in error:', error)
-      setError(error.message || "An error occurred during Google sign in.")
+      let errorMessage = error.message || "An error occurred during Google sign in."
+      // Replace "Failed to fetch" with a more user-friendly message
+      if (errorMessage.includes("Failed to fetch") || errorMessage.includes("fetch")) {
+        errorMessage = "Check your internet connection"
+      }
+      setError(errorMessage)
       setLoading(false)
     }
   }

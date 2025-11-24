@@ -19,7 +19,8 @@ import {
   Video,
   ExternalLink,
   Calendar as CalendarIcon,
-  DollarSign
+  DollarSign,
+  Sparkles
 } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard/layout"
 import { supabase } from '@/lib/supabase'
@@ -146,6 +147,7 @@ export default function LearnerDashboard() {
   const [convertedAmounts, setConvertedAmounts] = React.useState<Record<string, string>>({})
   const [convertedHourlyRates, setConvertedHourlyRates] = React.useState<Record<number, string>>({})
   const [sessionsLoading, setSessionsLoading] = React.useState(false)
+  const [mentorsWithAds, setMentorsWithAds] = React.useState<Set<number>>(new Set())
   const router = useRouter()
 
   // Optimized: Fetch user data and sessions in parallel, mentors only when needed
@@ -185,53 +187,53 @@ export default function LearnerDashboard() {
           const userType = user.user_metadata?.user_type
           if (userType !== 'tutor' && userType !== 'mentor') {
             // Create student record
-            const { data: newStudent, error: createError } = await supabase
-              .from('students')
-              .insert({
-                id: user.id,
-                email: user.email || '',
-                full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-                avatar_url: user.user_metadata?.avatar_url || null,
-                bio: null,
-                website: null,
-                phone_number: null,
-                date_of_birth: null,
-                gender: null,
-                country: null,
-                city: null,
-                timezone: null,
-                native_language: null,
-                languages_spoken: '[]',
-                current_level: 'beginner',
-                interests: '[]',
-                learning_goals: null,
-                preferred_learning_style: null,
-                availability_hours: null,
-                budget_range: null,
-                social_links: '{}',
-                settings: '{}',
-                verified: user.email_confirmed_at ? true : false,
-                status: 'active',
-                is_complete: false,
-                role: 'student',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              })
-              .select()
-              .single()
+          const { data: newStudent, error: createError } = await supabase
+            .from('students')
+            .insert({
+              id: user.id,
+              email: user.email || '',
+              full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
+              avatar_url: user.user_metadata?.avatar_url || null,
+              bio: null,
+              website: null,
+              phone_number: null,
+              date_of_birth: null,
+              gender: null,
+              country: null,
+              city: null,
+              timezone: null,
+              native_language: null,
+              languages_spoken: '[]',
+              current_level: 'beginner',
+              interests: '[]',
+              learning_goals: null,
+              preferred_learning_style: null,
+              availability_hours: null,
+              budget_range: null,
+              social_links: '{}',
+              settings: '{}',
+              verified: user.email_confirmed_at ? true : false,
+              status: 'active',
+              is_complete: false,
+              role: 'student',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .select()
+            .single()
 
-            if (createError) {
-              setUserData({
-                id: user.id,
-                email: user.email || '',
-                full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-              })
-            } else {
-              setUserData(newStudent)
-              if (newStudent && newStudent.is_complete === false) {
-                setIsProfileCompletionOpen(true)
-              }
+          if (createError) {
+            setUserData({
+              id: user.id,
+              email: user.email || '',
+              full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
+            })
+          } else {
+            setUserData(newStudent)
+            if (newStudent && newStudent.is_complete === false) {
+              setIsProfileCompletionOpen(true)
             }
+          }
           }
         } else if (studentResult.data) {
           setUserData(studentResult.data)
@@ -249,7 +251,7 @@ export default function LearnerDashboard() {
             full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User',
           })
         } else {
-          router.push('/')
+        router.push('/')
         }
       } finally {
         setLoading(false)
@@ -296,22 +298,43 @@ export default function LearnerDashboard() {
     const fetchMentors = async () => {
       try {
         setMentorsLoading(true)
-        const response = await fetch('http://127.0.0.1:8000/api/v1/mentors/list/', {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        })
+        
+        // Try API first, fallback to Supabase if API fails
+        let mentorsData: any[] = []
+        
+        try {
+          const response = await fetch('http://127.0.0.1:8000/api/v1/mentors/list/', {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          })
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
+          if (response.ok) {
+            const data = await response.json()
+            if (data.success && data.mentors) {
+              mentorsData = data.mentors
+            }
+          }
+        } catch (apiError) {
+          console.warn('API fetch failed, trying Supabase directly:', apiError)
+          // Fallback to Supabase
+          const { data, error } = await supabase
+            .from('mentors')
+            .select('*')
+          
+          if (error) {
+            throw error
+          }
+          
+          if (data) {
+            mentorsData = data
+          }
         }
 
-        const data = await response.json()
-
-        if (data.success && data.mentors) {
+        if (mentorsData.length > 0) {
           // Process mentors more efficiently
-          const processedMentors = data.mentors.map((mentor: any) => {
+          const processedMentors = mentorsData.map((mentor: any) => {
             // Parse specialization from JSON string if needed
             let specialization = mentor.specialization || []
             if (typeof specialization === 'string') {
@@ -339,15 +362,17 @@ export default function LearnerDashboard() {
             }
 
             return {
-              ...mentor,
-              latitude: mentor.latitude ? Number(mentor.latitude) : undefined,
-              longitude: mentor.longitude ? Number(mentor.longitude) : undefined,
+            ...mentor,
+            latitude: mentor.latitude ? Number(mentor.latitude) : undefined,
+            longitude: mentor.longitude ? Number(mentor.longitude) : undefined,
               specialization,
               languages,
             }
           })
           setMentors(processedMentors)
+          console.log(`Loaded ${processedMentors.length} mentors on dashboard`)
         } else {
+          console.warn('No mentors found in database')
           setMentors([])
         }
       } catch (error) {
@@ -360,6 +385,36 @@ export default function LearnerDashboard() {
 
     fetchMentors()
   }, [activeTab, isGlobalMentorSearchOpen])
+
+  // Fetch active ad campaigns for mentors
+  React.useEffect(() => {
+    const fetchActiveCampaigns = async () => {
+      if (mentors.length === 0) return
+
+      try {
+        // Fetch all active campaigns from Supabase
+        const { data: campaigns, error } = await supabase
+          .from('ad_campaigns')
+          .select('mentor_id')
+          .eq('status', 'active')
+
+        if (error) {
+          console.error('Error fetching active campaigns:', error)
+          return
+        }
+
+        if (campaigns && campaigns.length > 0) {
+          // Create a set of mentor IDs with active campaigns
+          const mentorIdsWithAds = new Set(campaigns.map((campaign: any) => Number(campaign.mentor_id)))
+          setMentorsWithAds(mentorIdsWithAds)
+        }
+      } catch (error) {
+        console.error('Error fetching active campaigns:', error)
+      }
+    }
+
+    fetchActiveCampaigns()
+  }, [mentors])
 
   // Fetch booked sessions AND all available sessions - only when needed (sessions tab or overview)
   React.useEffect(() => {
@@ -503,7 +558,7 @@ export default function LearnerDashboard() {
         const sessionsData = uniqueSessions
 
         console.log('Sessions data before transformation:', sessionsData.length, sessionsData)
-        
+
         // Transform the data efficiently
         const transformedSessions: BookedSession[] = sessionsData
           .filter((session: any) => {
@@ -556,26 +611,26 @@ export default function LearnerDashboard() {
           } : null
           
           return {
-            id: session.id,
-            mentor_id: session.mentor_id,
-            mentor_name: session.mentors?.name || 'Unknown Mentor',
+          id: session.id,
+          mentor_id: session.mentor_id,
+          mentor_name: session.mentors?.name || 'Unknown Mentor',
             mentor_avatar: session.mentors?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(session.mentors?.name || 'User')}&background=3B82F6&color=fff&size=128`,
-            mentor_title: session.mentors?.title || '',
+          mentor_title: session.mentors?.title || '',
             mentor_data: mentorData,
-            learner_name: session.learner_name,
-            learner_email: session.learner_email,
-            date: session.date,
-            time: session.time,
-            duration: session.duration,
-            topic: session.topic,
-            notes: session.notes || '',
-            meeting_type: session.meeting_type,
-            meeting_link: session.meeting_link || '',
-            status: session.status,
-            amount: parseFloat(session.amount) || 0,
+          learner_name: session.learner_name,
+          learner_email: session.learner_email,
+          date: session.date,
+          time: session.time,
+          duration: session.duration,
+          topic: session.topic,
+          notes: session.notes || '',
+          meeting_type: session.meeting_type,
+          meeting_link: session.meeting_link || '',
+          status: session.status,
+          amount: parseFloat(session.amount) || 0,
             is_paid: isPaid,
             payment_id: payment?.id || null,
-            created_at: session.created_at
+          created_at: session.created_at
           }
         })
 
@@ -596,7 +651,7 @@ export default function LearnerDashboard() {
         // Debug: Log raw data
         console.log('Raw available sessions:', availableSessionsData)
         console.log('Raw booked sessions:', bookedSessionsData)
-        
+
         setBookedSessions(transformedSessions)
       } catch (error) {
         console.error('Error fetching sessions:', error)
@@ -967,8 +1022,28 @@ export default function LearnerDashboard() {
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.5, delay: 0.1 + index * 0.1 }}
-                      className="relative bg-white rounded-lg p-6 group hover:shadow-lg transition-all duration-300 border border-gray-200 flex flex-col h-full"
+                      className={`relative bg-white rounded-lg p-6 group hover:shadow-lg transition-all duration-300 border flex flex-col h-full ${
+                        mentorsWithAds.has(mentor.id) 
+                          ? 'border-yellow-400 border-2 shadow-yellow-100' 
+                          : 'border-gray-200'
+                      }`}
                     >
+                      {/* Sponsored Badge - Top Right Corner */}
+                      {mentorsWithAds.has(mentor.id) && (
+                        <motion.div
+                          initial={{ scale: 0, rotate: -180 }}
+                          animate={{ scale: 1, rotate: 0 }}
+                          transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                          className="absolute top-3 right-3 z-10"
+                        >
+                          <div className="relative">
+                            <div className="absolute inset-0 bg-yellow-400 blur-md opacity-50 rounded-full"></div>
+                            <div className="relative bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-full p-2 shadow-lg border-2 border-yellow-300">
+                              <Star className="w-5 h-5 text-white fill-white" />
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
                       {/* Header with Avatar and Price */}
                       <div className="flex items-start justify-between mb-4">
                         <div className="flex items-center space-x-3">
@@ -997,6 +1072,17 @@ export default function LearnerDashboard() {
                               <h3 className="text-gray-900 font-semibold text-base">
                                 {mentor.name}
                               </h3>
+                              {mentorsWithAds.has(mentor.id) && (
+                                <motion.span
+                                  initial={{ scale: 0 }}
+                                  animate={{ scale: 1 }}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-gradient-to-r from-yellow-400 to-orange-500 text-white rounded-full text-xs font-bold border-2 border-yellow-300 shadow-lg"
+                                  title="This mentor has active advertising"
+                                >
+                                  <Sparkles className="w-3 h-3 fill-white" />
+                                  <span className="font-semibold">Sponsored</span>
+                                </motion.span>
+                              )}
                               {mentor.is_verified && (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium border border-blue-200">
                                   <CheckCircle2 className="w-3 h-3 fill-blue-600 text-blue-600" />
@@ -1048,21 +1134,21 @@ export default function LearnerDashboard() {
                         }
                         
                         return specializations.length > 0 ? (
-                          <div className="flex flex-wrap gap-2 mb-4">
+                      <div className="flex flex-wrap gap-2 mb-4">
                             {specializations.slice(0, 3).map((skill, idx) => (
-                              <span
-                                key={idx}
-                                className="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 rounded-full"
-                              >
-                                {skill}
-                              </span>
-                            ))}
+                          <span
+                            key={idx}
+                            className="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 rounded-full"
+                          >
+                            {skill}
+                          </span>
+                        ))}
                             {specializations.length > 3 && (
-                              <span className="px-2 py-1 text-xs text-gray-500">
+                          <span className="px-2 py-1 text-xs text-gray-500">
                                 +{specializations.length - 3}
-                              </span>
-                            )}
-                          </div>
+                          </span>
+                        )}
+                      </div>
                         ) : null
                       })()}
 
@@ -1161,7 +1247,7 @@ export default function LearnerDashboard() {
                       'ongoing': 'bg-yellow-100 text-yellow-700 border-yellow-200',
                       'ended': 'bg-gray-100 text-gray-700 border-gray-200'
                     }
-                    
+
                     const cardBgClass = isUpcoming && isAvailableSession 
                       ? 'bg-gradient-to-br from-blue-50 via-white to-blue-50 border-2 border-blue-200 hover:!border-green-400' 
                       : 'bg-white border border-gray-200 hover:!border-green-400 hover:!border-2'
@@ -1217,16 +1303,16 @@ export default function LearnerDashboard() {
                                 transition={{ duration: 0.2 }}
                               >
                                 <div className="relative">
-                                  <img
+                                <img
                                     src={session.mentor_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(session.mentor_name)}&background=3B82F6&color=fff&size=128`}
-                                    alt={session.mentor_name}
+                                  alt={session.mentor_name}
                                     className={`w-16 h-16 rounded-full object-cover border-2 ${
                                       isUpcoming && isAvailableSession 
                                         ? 'border-blue-400 shadow-lg shadow-blue-200' 
                                         : 'border-blue-200'
                                     }`}
-                                    onError={(e) => {
-                                      const target = e.target as HTMLImageElement
+                                  onError={(e) => {
+                                    const target = e.target as HTMLImageElement
                                       target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(session.mentor_name)}&background=3B82F6&color=fff&size=128`
                                     }}
                                   />
@@ -1247,7 +1333,7 @@ export default function LearnerDashboard() {
                                     />
                                   )}
                                   <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
-                                </div>
+                              </div>
                               </motion.div>
 
                               {/* Session Details */}
@@ -1276,7 +1362,7 @@ export default function LearnerDashboard() {
                                     {displayStatusLabel}
                                   </motion.span>
                                 </div>
-                                
+
                                 {/* Mentor Name */}
                                 <motion.div 
                                   className="flex items-center gap-2 mb-3"
@@ -1296,7 +1382,7 @@ export default function LearnerDashboard() {
                                   }`}>
                                     {session.mentor_name}
                                   </span>
-                                  {session.mentor_title && (
+                                    {session.mentor_title && (
                                     <span className={`text-sm ${
                                       isUpcoming && isAvailableSession 
                                         ? 'text-blue-600' 
@@ -1304,7 +1390,7 @@ export default function LearnerDashboard() {
                                     }`}>
                                       • {session.mentor_title}
                                     </span>
-                                  )}
+                                    )}
                                 </motion.div>
 
                                 <div className="space-y-3 text-sm">
@@ -1371,7 +1457,7 @@ export default function LearnerDashboard() {
                                     <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
                                       <p className="text-xs font-semibold text-blue-900 mb-1">Your Session</p>
                                       <p className="text-xs text-blue-700">You have booked this session</p>
-                                    </div>
+                                  </div>
                                   ) : null}
 
                                   {/* Date */}
@@ -1530,16 +1616,16 @@ export default function LearnerDashboard() {
                                 if (isMeetingActive && session.meeting_link && session.meeting_type !== 'in-person') {
                                   return (
                                     <>
-                                      <a
-                                        href={session.meeting_link}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
+                              <a
+                                href={session.meeting_link}
+                                target="_blank"
+                                rel="noopener noreferrer"
                                         className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium text-sm shadow-sm"
-                                      >
-                                        <Video className="w-4 h-4" />
+                              >
+                                <Video className="w-4 h-4" />
                                         Join Meeting Now
-                                        <ExternalLink className="w-3 h-3" />
-                                      </a>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
                                       <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium border border-green-200">
                                         <Clock className="w-3 h-3 inline-block mr-1" />
                                         Meeting is ongoing
@@ -1577,10 +1663,10 @@ export default function LearnerDashboard() {
                                     )
                                   } else {
                                     return (
-                                      <div className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium">
-                                        <MapPin className="w-4 h-4 inline-block mr-2" />
-                                        In-Person Session
-                                      </div>
+                              <div className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium">
+                                <MapPin className="w-4 h-4 inline-block mr-2" />
+                                In-Person Session
+                              </div>
                                     )
                                   }
                                 }
@@ -1660,15 +1746,15 @@ export default function LearnerDashboard() {
                               
                               if (isMeetingActive) {
                                 return (
-                                  <button
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(session.meeting_link || '')
-                                      // You could add a toast notification here
-                                    }}
-                                    className="text-xs text-blue-600 hover:text-blue-700 underline"
-                                  >
-                                    Copy meeting link
-                                  </button>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(session.meeting_link || '')
+                                  // You could add a toast notification here
+                                }}
+                                className="text-xs text-blue-600 hover:text-blue-700 underline"
+                              >
+                                Copy meeting link
+                              </button>
                                 )
                               }
                               return null
