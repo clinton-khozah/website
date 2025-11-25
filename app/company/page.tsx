@@ -171,9 +171,22 @@ export default function CompanyPage() {
   }, [])
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-blue-50 via-white to-blue-50">
+    <div className="min-h-screen flex flex-col relative">
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          width: "100vw",
+          height: "100vh",
+          backgroundImage: "url('/images/adspace.jpg')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          zIndex: 0,
+        }}
+        aria-hidden="true"
+      />
       <Navbar />
-      <PageContainer className="flex-1">
+      <PageContainer className="flex-1 relative z-10">
         <div className="py-12 md:py-20">
           {/* Hero Section */}
           <motion.div
@@ -191,14 +204,14 @@ export default function CompanyPage() {
                 className="object-contain"
               />
                             </div>
-            <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-6 font-['Verdana',sans-serif]">
+            <h1 className="text-4xl md:text-6xl font-bold text-white mb-6 font-['Verdana',sans-serif] drop-shadow-lg">
               Who Are We
             </h1>
             <div className="max-w-4xl mx-auto">
-              <p className="text-xl md:text-2xl text-gray-700 mb-4 font-['Verdana',sans-serif] leading-relaxed font-semibold">
-                Welcome to <span className="text-blue-600 font-bold">Brightbyt</span>
+              <p className="text-xl md:text-2xl text-white mb-4 font-['Verdana',sans-serif] leading-relaxed font-semibold drop-shadow-md">
+                Welcome to <span className="text-blue-300 font-bold">Brightbyt</span>
               </p>
-              <p className="text-lg text-gray-600 font-['Verdana',sans-serif] leading-relaxed">
+              <p className="text-lg text-gray-100 font-['Verdana',sans-serif] leading-relaxed drop-shadow-md">
                 We are the premier platform where you can find the best mentors to teach you whatever you want to learn. 
                 Book a session, make a secure payment, and have an exceptional learning experience with your special mentor. 
                 We are the best in the world at connecting students with world-class educators.
@@ -248,7 +261,7 @@ export default function CompanyPage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.2 }}
-              className="bg-white rounded-2xl border-2 border-blue-200 shadow-xl p-8 md:p-12"
+              className="bg-white/95 backdrop-blur-sm rounded-2xl border-2 border-blue-200 shadow-xl p-8 md:p-12"
             >
               <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4 text-center font-['Verdana',sans-serif]">
                 Subjects We Offer
@@ -306,7 +319,7 @@ export default function CompanyPage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.3 }}
-              className="bg-white rounded-2xl border-2 border-blue-200 shadow-xl p-8 md:p-12"
+              className="bg-white/95 backdrop-blur-sm rounded-2xl border-2 border-blue-200 shadow-xl p-8 md:p-12"
             >
               <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-8 text-center font-['Verdana',sans-serif]">
                 What Makes Us Different
@@ -354,7 +367,9 @@ export default function CompanyPage() {
         </div>
       </div>
       </PageContainer>
-      <Footer />
+      <div className="relative z-10">
+        <Footer />
+      </div>
     </div>
   )
 } 

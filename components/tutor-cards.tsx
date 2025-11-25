@@ -6,7 +6,10 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { ChevronLeft, ChevronRight, Star } from "lucide-react"
+import { ChevronLeft, ChevronRight, Star, Loader2 } from "lucide-react"
+import { supabase } from "@/lib/supabase"
+import { SignInModal } from "@/components/auth/sign-in-modal"
+import { SignUpModal } from "@/components/auth/sign-up-modal"
 
 interface Tutor {
   id: number
@@ -21,69 +24,6 @@ interface Tutor {
   rating: number
 }
 
-const tutors: Tutor[] = [
-  {
-    id: 1,
-    name: "David Kim",
-    handle: "@davidgaming",
-    avatar: "https://randomuser.me/api/portraits/men/65.jpg",
-    description: "Fitness coach and nutrition expert sharing workout routines, meal plans, and health advice.",
-    followers: "950K",
-    engagement: "15.7%",
-    categories: ["Fitness", "Health", "Nutrition"],
-    status: "trending",
-    rating: 4.8
-  },
-  {
-    id: 2,
-    name: "Marcus Johnson",
-    handle: "@fitnesswithmark",
-    avatar: "https://randomuser.me/api/portraits/men/75.jpg",
-    description: "Fashion and lifestyle influencer sharing outfit ideas, beauty tips, and travel experiences.",
-    followers: "750K",
-    engagement: "11.2%",
-    categories: ["Fashion", "Lifestyle", "Travel"],
-    status: "trending",
-    rating: 4.6
-  },
-  {
-    id: 3,
-    name: "Alex Morgan",
-    handle: "@techreviewalex",
-    avatar: "https://randomuser.me/api/portraits/men/32.jpg",
-    description: "Tech reviewer and gadget enthusiast with a focus on consumer electronics and smartphones.",
-    followers: "2.5M",
-    engagement: "8.5%",
-    categories: ["Technology", "Gadgets", "Reviews"],
-    status: "verified",
-    rating: 4.9
-  },
-  {
-    id: 4,
-    name: "Sarah Chen",
-    handle: "@sarahmath",
-    avatar: "https://randomuser.me/api/portraits/women/44.jpg",
-    description: "Experienced mathematics tutor specializing in algebra, calculus, and advanced mathematics. Helping students excel in their math journey.",
-    followers: "1.2M",
-    engagement: "18.3%",
-    categories: ["Mathematics", "Algebra", "Calculus"],
-    status: "verified",
-    rating: 4.9
-  },
-  {
-    id: 5,
-    name: "Michael Thompson",
-    handle: "@mikephysics",
-    avatar: "https://randomuser.me/api/portraits/men/68.jpg",
-    description: "Physics and chemistry expert with years of teaching experience. Making physical science concepts easy to understand.",
-    followers: "850K",
-    engagement: "16.5%",
-    categories: ["Physical Science", "Physics", "Chemistry"],
-    status: "trending",
-    rating: 4.7
-  }
-]
-
 interface TutorCardsProps {
   searchQuery?: string
   selectedCategory?: string | null
@@ -92,12 +32,172 @@ interface TutorCardsProps {
 export function TutorCards({ searchQuery = "", selectedCategory = null }: TutorCardsProps) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [direction, setDirection] = useState(0)
+  const [tutors, setTutors] = useState<Tutor[]>([])
+  const [loading, setLoading] = useState(true)
+  const [isSignInOpen, setIsSignInOpen] = useState(false)
+  const [isSignUpOpen, setIsSignUpOpen] = useState(false)
   const cardsPerView = 3
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Fetch mentors from database
+  useEffect(() => {
+    const fetchMentors = async () => {
+      try {
+        setLoading(true)
+        
+        // Try API first
+        try {
+          const response = await fetch('http://127.0.0.1:8000/api/v1/mentors/list/', {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            if (data.success && data.mentors) {
+              const mappedTutors: Tutor[] = data.mentors.map((mentor: any) => {
+                // Parse specialization
+                let specializations: string[] = []
+                if (Array.isArray(mentor.specialization)) {
+                  specializations = mentor.specialization
+                } else if (typeof mentor.specialization === 'string') {
+                  try {
+                    specializations = JSON.parse(mentor.specialization || '[]')
+                  } catch {
+                    specializations = []
+                  }
+                }
+
+                // Generate handle from name
+                const handle = `@${mentor.name.toLowerCase().replace(/\s+/g, '')}`
+
+                // Calculate followers (sessions conducted * 1000 for demo)
+                const followers = mentor.sessions_conducted 
+                  ? `${(mentor.sessions_conducted * 1000).toLocaleString()}`
+                  : "0"
+
+                // Calculate engagement (rating * 3 for demo)
+                const engagement = mentor.rating 
+                  ? `${(mentor.rating * 3).toFixed(1)}%`
+                  : "0%"
+
+                // Determine status
+                const status: "trending" | "verified" = mentor.is_verified 
+                  ? "verified" 
+                  : mentor.rating >= 4.5 
+                    ? "trending" 
+                    : "trending"
+
+                return {
+                  id: mentor.id,
+                  name: mentor.name,
+                  handle: handle,
+                  avatar: mentor.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(mentor.name)}&background=3B82F6&color=fff&size=128`,
+                  description: mentor.description || mentor.title || "Experienced mentor ready to help you learn.",
+                  followers: followers,
+                  engagement: engagement,
+                  categories: specializations.length > 0 ? specializations : [mentor.title || "General"],
+                  status: status,
+                  rating: mentor.rating || 4.0
+                }
+              })
+              console.log(`Mapped ${mappedTutors.length} tutors from API`)
+              setTutors(mappedTutors)
+              setLoading(false)
+              return
+            } else {
+              console.log("API returned data but no mentors found")
+            }
+          } else {
+            console.log("API response not OK:", response.status)
+          }
+        } catch (apiError) {
+          console.log("API fetch failed, trying Supabase directly:", apiError)
+        }
+
+        // Fallback to Supabase
+        const { data: mentorsData, error } = await supabase
+          .from('mentors')
+          .select('*')
+          .limit(20)
+
+        console.log("Supabase fetch result:", { mentorsData, error })
+
+        if (error) {
+          console.error("Error fetching mentors from Supabase:", error)
+          setTutors([])
+        } else if (mentorsData && mentorsData.length > 0) {
+          console.log(`Found ${mentorsData.length} mentors from Supabase`)
+          const mappedTutors: Tutor[] = mentorsData.map((mentor: any) => {
+            // Parse specialization
+            let specializations: string[] = []
+            if (Array.isArray(mentor.specialization)) {
+              specializations = mentor.specialization
+            } else if (typeof mentor.specialization === 'string') {
+              try {
+                specializations = JSON.parse(mentor.specialization || '[]')
+              } catch {
+                specializations = []
+              }
+            }
+
+            // Generate handle from name
+            const handle = `@${mentor.name.toLowerCase().replace(/\s+/g, '')}`
+
+            // Calculate followers (sessions conducted * 1000 for demo)
+            const followers = mentor.sessions_conducted 
+              ? `${(mentor.sessions_conducted * 1000).toLocaleString()}`
+              : "0"
+
+            // Calculate engagement (rating * 3 for demo)
+            const engagement = mentor.rating 
+              ? `${(mentor.rating * 3).toFixed(1)}%`
+              : "0%"
+
+            // Determine status
+            const status: "trending" | "verified" = mentor.is_verified 
+              ? "verified" 
+              : mentor.rating >= 4.5 
+                ? "trending" 
+                : "trending"
+
+            return {
+              id: mentor.id,
+              name: mentor.name,
+              handle: handle,
+              avatar: mentor.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(mentor.name)}&background=3B82F6&color=fff&size=128`,
+              description: mentor.description || mentor.title || "Experienced mentor ready to help you learn.",
+              followers: followers,
+              engagement: engagement,
+              categories: specializations.length > 0 ? specializations : [mentor.title || "General"],
+              status: status,
+              rating: parseFloat(mentor.rating) || 4.0
+            }
+          })
+          console.log(`Mapped ${mappedTutors.length} tutors from Supabase`)
+          setTutors(mappedTutors)
+        } else {
+          console.log("No mentors data found in Supabase")
+          setTutors([])
+        }
+      } catch (error) {
+        console.error("Error fetching mentors:", error)
+        setTutors([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchMentors()
+  }, [])
 
   // Filter tutors based on search query and selected category
   const filteredTutors = useMemo(() => {
     let filtered = tutors
+
+    console.log("Filtering tutors. Total tutors:", tutors.length, "Search query:", searchQuery, "Category:", selectedCategory)
 
     // Filter by search query
     if (searchQuery.trim()) {
@@ -108,6 +208,7 @@ export function TutorCards({ searchQuery = "", selectedCategory = null }: TutorC
         tutor.description.toLowerCase().includes(query) ||
         tutor.categories.some(cat => cat.toLowerCase().includes(query))
       )
+      console.log("After search filter:", filtered.length)
     }
 
     // Filter by selected category
@@ -126,10 +227,12 @@ export function TutorCards({ searchQuery = "", selectedCategory = null }: TutorC
           (selectedCategory === "Life Science" && (cat.toLowerCase().includes("life") || cat.toLowerCase().includes("biology") || cat.toLowerCase().includes("biochemistry") || cat.toLowerCase().includes("biomedical")))
         )
       )
+      console.log("After category filter:", filtered.length)
     }
 
+    console.log("Final filtered tutors:", filtered.length)
     return filtered
-  }, [searchQuery, selectedCategory])
+  }, [tutors, searchQuery, selectedCategory])
 
   const maxIndex = Math.max(0, filteredTutors.length - cardsPerView)
 
@@ -154,11 +257,28 @@ export function TutorCards({ searchQuery = "", selectedCategory = null }: TutorC
   // Get visible tutors based on current index
   const visibleTutors = filteredTutors.slice(currentIndex, currentIndex + cardsPerView)
 
+  if (loading) {
+    return (
+      <div className="w-full py-8 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    )
+  }
+
   return (
     <div className="w-full py-8">
       {filteredTutors.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-gray-500 text-lg">No tutors found matching your search criteria.</p>
+          <p className="text-gray-500 text-lg">
+            {tutors.length === 0 
+              ? "No tutors available at the moment. Please check back later." 
+              : "No tutors found matching your search criteria."}
+          </p>
+          {tutors.length === 0 && (
+            <p className="text-sm text-gray-400 mt-2">
+              Check the browser console for details.
+            </p>
+          )}
         </div>
       ) : (
         <div className="relative flex items-center gap-4">
@@ -246,17 +366,6 @@ export function TutorCards({ searchQuery = "", selectedCategory = null }: TutorC
                   <p className="text-sm text-gray-700 leading-relaxed">{tutor.description}</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <div className="text-xs text-gray-500 mb-1">Followers</div>
-                    <div className="text-lg font-semibold text-gray-900">{tutor.followers}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-500 mb-1">Engagement</div>
-                    <div className="text-lg font-semibold text-gray-900">{tutor.engagement}</div>
-                  </div>
-                </div>
-
                 <div className="flex flex-wrap gap-2 mb-4">
                   {tutor.categories.map((category) => (
                     <Badge
@@ -270,6 +379,7 @@ export function TutorCards({ searchQuery = "", selectedCategory = null }: TutorC
                 </div>
 
                 <Button
+                  onClick={() => setIsSignInOpen(true)}
                   className="w-full bg-blue-600 text-white hover:bg-blue-700"
                 >
                   Book Tutor
@@ -293,6 +403,22 @@ export function TutorCards({ searchQuery = "", selectedCategory = null }: TutorC
           )}
         </div>
       )}
+
+      {/* Sign In Modal */}
+      <SignInModal
+        isOpen={isSignInOpen}
+        onClose={() => setIsSignInOpen(false)}
+        onSignUp={() => {
+          setIsSignInOpen(false)
+          setIsSignUpOpen(true)
+        }}
+      />
+
+      {/* Sign Up Modal */}
+      <SignUpModal
+        isOpen={isSignUpOpen}
+        onClose={() => setIsSignUpOpen(false)}
+      />
     </div>
   )
 }

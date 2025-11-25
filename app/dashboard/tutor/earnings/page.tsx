@@ -86,6 +86,7 @@ export default function EarningsPage() {
   const [paymentMethod, setPaymentMethod] = useState<string | null>(null);
   const [paymentAccountDetails, setPaymentAccountDetails] = useState<any>(null);
   const [pendingWithdrawals, setPendingWithdrawals] = useState<any[]>([]);
+  const [allWithdrawals, setAllWithdrawals] = useState<any[]>([]);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [withdrawalSuccessData, setWithdrawalSuccessData] = useState<any>(null);
 
@@ -243,14 +244,14 @@ export default function EarningsPage() {
             ? parseInt(mentorData.id)
             : mentorData.id;
 
-        const { data: pendingWithdrawalsData } = await supabase
+        const { data: allPendingWithdrawalsData } = await supabase
           .from("withdrawals")
-          .select("amount")
+          .select("amount, status")
           .eq("mentor_id", mentorIdForBalance)
           .in("status", ["pending", "processing", "pending_manual"]);
 
-        if (pendingWithdrawalsData) {
-          const pendingTotal = pendingWithdrawalsData.reduce(
+        if (allPendingWithdrawalsData && allPendingWithdrawalsData.length > 0) {
+          const pendingTotal = allPendingWithdrawalsData.reduce(
             (sum, w) => sum + parseFloat(w.amount || 0),
             0
           );
@@ -274,9 +275,9 @@ export default function EarningsPage() {
     fetchEarnings();
   }, [mentorData?.id]);
 
-  // Fetch pending withdrawals
+  // Fetch all withdrawals (for history) and pending withdrawals
   useEffect(() => {
-    const fetchPendingWithdrawals = async () => {
+    const fetchWithdrawals = async () => {
       if (!mentorData?.id) {
         console.log("No mentorData.id, skipping withdrawal fetch");
         return;
@@ -289,18 +290,48 @@ export default function EarningsPage() {
             ? parseInt(mentorData.id)
             : mentorData.id;
 
-        console.log(
-          "Fetching pending withdrawals for mentor_id:",
-          mentorId,
-          "type:",
-          typeof mentorId
-        );
+        console.log("Fetching withdrawals for mentor_id:", mentorId, "type:", typeof mentorId);
+        console.log("mentorData.id:", mentorData.id, "type:", typeof mentorData.id);
 
-        // First, let's check if there are ANY withdrawals for this mentor (for debugging)
-        const { data: allWithdrawals, error: allError } = await supabase
+        // Fetch ALL withdrawals for history - try both number and string formats
+        let allWithdrawalsData = null;
+        let allError = null;
+
+        // Try with number first
+        const { data: withdrawalsByNumber, error: errorByNumber } = await supabase
           .from("withdrawals")
           .select("*")
-          .eq("mentor_id", mentorId);
+          .eq("mentor_id", mentorId)
+          .order("requested_at", { ascending: false });
+
+        if (errorByNumber) {
+          console.error("Error fetching with number mentor_id:", errorByNumber);
+          // Try with string as fallback
+          const { data: withdrawalsByString, error: errorByString } = await supabase
+            .from("withdrawals")
+            .select("*")
+            .eq("mentor_id", String(mentorId))
+            .order("requested_at", { ascending: false });
+          
+          if (errorByString) {
+            console.error("Error fetching with string mentor_id:", errorByString);
+            allError = errorByString;
+          } else {
+            allWithdrawalsData = withdrawalsByString;
+            console.log("Found withdrawals using string mentor_id:", allWithdrawalsData);
+          }
+        } else {
+          allWithdrawalsData = withdrawalsByNumber;
+          console.log("Found withdrawals using number mentor_id:", allWithdrawalsData);
+        }
+
+        // Also check what mentor_ids exist in withdrawals table for debugging
+        const { data: sampleWithdrawals } = await supabase
+          .from("withdrawals")
+          .select("mentor_id, id, amount, status")
+          .limit(5);
+        
+        console.log("Sample withdrawals (first 5) with mentor_ids:", sampleWithdrawals);
 
         if (allError) {
           console.error("Error fetching all withdrawals:", allError);
@@ -310,24 +341,44 @@ export default function EarningsPage() {
           ) {
             console.warn("Withdrawals table does not exist yet");
             setPendingWithdrawals([]);
+            setAllWithdrawals([]);
             return;
           }
         } else {
-          console.log(
-            "All withdrawals for mentor:",
-            allWithdrawals?.length || 0,
-            allWithdrawals
-          );
+          console.log(`Found ${allWithdrawalsData?.length || 0} withdrawals for mentor ${mentorId}`);
+          setAllWithdrawals(allWithdrawalsData || []);
         }
 
-        // Now fetch only pending ones
-        const { data: withdrawalsData, error: withdrawalsError } =
-          await supabase
+        // Fetch only pending ones - try both number and string
+        let withdrawalsData = null;
+        let withdrawalsError = null;
+
+        const { data: pendingByNumber, error: pendingErrorByNumber } = await supabase
+          .from("withdrawals")
+          .select("*")
+          .eq("mentor_id", mentorId)
+          .in("status", ["pending", "processing", "pending_manual"])
+          .order("requested_at", { ascending: false });
+
+        if (pendingErrorByNumber) {
+          console.error("Error fetching pending with number:", pendingErrorByNumber);
+          // Try with string
+          const { data: pendingByString, error: pendingErrorByString } = await supabase
             .from("withdrawals")
             .select("*")
-            .eq("mentor_id", mentorId)
+            .eq("mentor_id", String(mentorId))
             .in("status", ["pending", "processing", "pending_manual"])
             .order("requested_at", { ascending: false });
+          
+          if (pendingErrorByString) {
+            console.error("Error fetching pending with string:", pendingErrorByString);
+            withdrawalsError = pendingErrorByString;
+          } else {
+            withdrawalsData = pendingByString;
+          }
+        } else {
+          withdrawalsData = pendingByNumber;
+        }
 
         if (withdrawalsError) {
           console.error(
@@ -335,36 +386,21 @@ export default function EarningsPage() {
             withdrawalsError
           );
           setPendingWithdrawals([]);
-          return;
-        }
-
-        console.log(
-          "Fetched pending withdrawals:",
-          withdrawalsData?.length || 0,
-          "withdrawals",
-          withdrawalsData
-        );
-
-        if (withdrawalsData && withdrawalsData.length > 0) {
-          console.log("Setting pending withdrawals:", withdrawalsData);
         } else {
-          console.log(
-            "No pending withdrawals found. All withdrawals:",
-            allWithdrawals
-          );
+          console.log(`Found ${withdrawalsData?.length || 0} pending withdrawals`);
+          setPendingWithdrawals(withdrawalsData || []);
         }
-
-        setPendingWithdrawals(withdrawalsData || []);
       } catch (error: any) {
-        console.error("Error fetching pending withdrawals:", error);
+        console.error("Error fetching withdrawals:", error);
         setPendingWithdrawals([]);
+        setAllWithdrawals([]);
       }
     };
 
-    fetchPendingWithdrawals();
+    fetchWithdrawals();
 
-    // Refresh pending withdrawals every 30 seconds
-    const interval = setInterval(fetchPendingWithdrawals, 30000);
+    // Refresh withdrawals every 30 seconds
+    const interval = setInterval(fetchWithdrawals, 30000);
     return () => clearInterval(interval);
   }, [mentorData?.id]);
 
@@ -484,22 +520,48 @@ export default function EarningsPage() {
         setShowSuccessModal(true);
         setWithdrawalAmount("");
 
-        // Refresh pending withdrawals and earnings
-        // Convert mentorData.id to number if needed
+        // Wait a moment for database to be consistent, then refresh all withdrawals and earnings
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
         const mentorIdForRefresh =
           typeof mentorData.id === "string"
             ? parseInt(mentorData.id)
             : mentorData.id;
 
-        const { data: withdrawalsData } = await supabase
+        // Fetch all withdrawals - try both number and string formats
+        let allWithdrawalsData = null;
+        
+        const { data: withdrawalsByNumber } = await supabase
           .from("withdrawals")
           .select("*")
           .eq("mentor_id", mentorIdForRefresh)
-          .in("status", ["pending", "processing", "pending_manual"])
           .order("requested_at", { ascending: false });
 
-        if (withdrawalsData) {
-          setPendingWithdrawals(withdrawalsData);
+        if (withdrawalsByNumber) {
+          allWithdrawalsData = withdrawalsByNumber;
+        } else {
+          // Try with string as fallback
+          const { data: withdrawalsByString } = await supabase
+            .from("withdrawals")
+            .select("*")
+            .eq("mentor_id", String(mentorIdForRefresh))
+            .order("requested_at", { ascending: false });
+          
+          if (withdrawalsByString) {
+            allWithdrawalsData = withdrawalsByString;
+          }
+        }
+
+        if (allWithdrawalsData) {
+          console.log("Refreshed withdrawals after withdrawal:", allWithdrawalsData);
+          setAllWithdrawals(allWithdrawalsData);
+          // Filter pending ones
+          const pending = allWithdrawalsData.filter((w) =>
+            ["pending", "processing", "pending_manual"].includes(w.status)
+          );
+          setPendingWithdrawals(pending);
+        } else {
+          console.warn("No withdrawals found after withdrawal request");
         }
 
         // Refresh earnings to update balance
@@ -561,7 +623,10 @@ export default function EarningsPage() {
           }, 0);
 
           // Subtract pending withdrawals
-          const pendingTotal = (withdrawalsData || []).reduce(
+          const pending = allWithdrawalsData?.filter((w) =>
+            ["pending", "processing", "pending_manual"].includes(w.status)
+          ) || [];
+          const pendingTotal = pending.reduce(
             (sum, w) => sum + parseFloat(w.amount || 0),
             0
           );
@@ -828,6 +893,181 @@ export default function EarningsPage() {
                 )}
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Withdrawal History */}
+        <Card className="mb-6">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Withdrawal History</CardTitle>
+                <CardDescription>
+                  All your withdrawal requests and their status
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  if (!mentorData?.id) return;
+                  const mentorId =
+                    typeof mentorData.id === "string"
+                      ? parseInt(mentorData.id)
+                      : mentorData.id;
+                  
+                  // Try both formats
+                  let allData = null;
+                  const { data: byNumber } = await supabase
+                    .from("withdrawals")
+                    .select("*")
+                    .eq("mentor_id", mentorId)
+                    .order("requested_at", { ascending: false });
+                  
+                  if (byNumber) {
+                    allData = byNumber;
+                  } else {
+                    const { data: byString } = await supabase
+                      .from("withdrawals")
+                      .select("*")
+                      .eq("mentor_id", String(mentorId))
+                      .order("requested_at", { ascending: false });
+                    allData = byString;
+                  }
+                  
+                  if (allData) {
+                    setAllWithdrawals(allData);
+                    const pending = allData.filter((w) =>
+                      ["pending", "processing", "pending_manual"].includes(w.status)
+                    );
+                    setPendingWithdrawals(pending);
+                    console.log("Manually refreshed withdrawals:", allData);
+                  }
+                }}
+              >
+                <Loader2 className="h-4 w-4 mr-2" />
+                Refresh
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {allWithdrawals.length === 0 ? (
+              <div className="text-center py-12">
+                <Wallet className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-600">No withdrawals yet</p>
+                <p className="text-sm text-gray-500 mt-1">
+                  Your withdrawal history will appear here
+                </p>
+                <p className="text-xs text-gray-400 mt-2">
+                  Mentor ID: {mentorData?.id} (Check browser console for details)
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {allWithdrawals.map((withdrawal) => (
+                  <motion.div
+                    key={withdrawal.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className={`flex items-center justify-between p-4 border rounded-lg transition-colors ${
+                      withdrawal.status === "completed"
+                        ? "bg-green-50 border-green-200 hover:bg-green-100"
+                        : withdrawal.status === "failed"
+                        ? "bg-red-50 border-red-200 hover:bg-red-100"
+                        : withdrawal.status === "processing"
+                        ? "bg-blue-50 border-blue-200 hover:bg-blue-100"
+                        : "bg-yellow-50 border-yellow-200 hover:bg-yellow-100"
+                    }`}
+                  >
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <p className="text-lg font-bold text-gray-900">
+                          {convertedStats.currencySymbol || "$"}
+                          {parseFloat(withdrawal.amount || 0).toFixed(2)}
+                        </p>
+                        <Badge
+                          variant="outline"
+                          className={
+                            withdrawal.status === "completed"
+                              ? "bg-green-100 text-green-700 border-green-300"
+                              : withdrawal.status === "failed"
+                              ? "bg-red-100 text-red-700 border-red-300"
+                              : withdrawal.status === "processing"
+                              ? "bg-blue-100 text-blue-700 border-blue-300"
+                              : withdrawal.status === "pending_manual"
+                              ? "bg-purple-100 text-purple-700 border-purple-300"
+                              : "bg-yellow-100 text-yellow-700 border-yellow-300"
+                          }
+                        >
+                          {withdrawal.status === "completed"
+                            ? "Completed"
+                            : withdrawal.status === "failed"
+                            ? "Failed"
+                            : withdrawal.status === "processing"
+                            ? "Processing"
+                            : withdrawal.status === "pending_manual"
+                            ? "Pending Manual"
+                            : "Pending"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-4 text-sm text-gray-600">
+                        {withdrawal.requested_at && (
+                          <span>
+                            Requested:{" "}
+                            {new Date(
+                              withdrawal.requested_at
+                            ).toLocaleDateString("en-US", {
+                              year: "numeric",
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        )}
+                        {withdrawal.processed_at && (
+                          <span>
+                            Processed:{" "}
+                            {new Date(
+                              withdrawal.processed_at
+                            ).toLocaleDateString("en-US", {
+                              year: "numeric",
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        )}
+                        {withdrawal.payment_method && (
+                          <span className="capitalize">
+                            Method: {withdrawal.payment_method.replace("_", " ")}
+                          </span>
+                        )}
+                      </div>
+                      {withdrawal.failure_reason && (
+                        <p className="text-xs text-red-600 mt-2">
+                          Reason: {withdrawal.failure_reason}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      {withdrawal.status === "completed" && (
+                        <CheckCircle2 className="h-6 w-6 text-green-600" />
+                      )}
+                      {withdrawal.status === "failed" && (
+                        <AlertCircle className="h-6 w-6 text-red-600" />
+                      )}
+                      {(withdrawal.status === "pending" ||
+                        withdrawal.status === "processing" ||
+                        withdrawal.status === "pending_manual") && (
+                        <Loader2 className="h-6 w-6 text-yellow-600 animate-spin" />
+                      )}
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 

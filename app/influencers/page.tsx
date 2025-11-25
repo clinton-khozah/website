@@ -1,15 +1,18 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { motion } from "framer-motion"
 import { Navbar } from "@/components/navbar"
 import { useTheme } from "next-themes"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Instagram, Youtube, Twitter, Globe, Users, Star, TrendingUp, Calendar, Check, Twitch, Award, Target, DollarSign, Clock, Heart, MessageSquare, Share2, Zap, Trophy, TrendingUp as TrendingUpIcon } from "lucide-react"
+import { Instagram, Youtube, Twitter, Globe, Users, Star, TrendingUp, Calendar, Check, Twitch, Award, Target, DollarSign, Clock, Heart, MessageSquare, Share2, Zap, Trophy, TrendingUp as TrendingUpIcon, ChevronLeft, ChevronRight } from "lucide-react"
 import { Footer } from "@/components/footer"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { Sparklines, SparklinesLine } from "react-sparklines"
+import { supabase } from "@/lib/supabase"
+import { SignInModal } from "@/components/auth/sign-in-modal"
+import { SignUpModal } from "@/components/auth/sign-up-modal"
 
 const influencers = [
   {
@@ -180,7 +183,7 @@ function StarRating({ rating }: { rating: number }) {
 // Skeleton Loader
 function InfluencerSkeleton() {
   return (
-    <div className="w-80 h-[480px] rounded-2xl border shadow-xl p-6 flex flex-col items-center justify-between animate-pulse bg-gray-100 dark:bg-gray-800">
+    <div className="w-80 h-[420px] rounded-2xl border shadow-xl p-6 flex flex-col items-center justify-between animate-pulse bg-gray-100 dark:bg-gray-800">
       <div className="w-24 h-24 rounded-full bg-gray-300 dark:bg-gray-700 mb-4" />
       <div className="h-4 w-32 bg-gray-300 dark:bg-gray-700 rounded mb-2" />
       <div className="h-3 w-20 bg-gray-200 dark:bg-gray-600 rounded mb-2" />
@@ -264,13 +267,27 @@ function ComparisonModal({ open, onClose, influencers }: any) {
   );
 }
 
+interface Mentor {
+  id: number
+  name: string
+  title: string
+  description: string
+  specialization: string[] | string
+  rating: number
+  total_reviews: number
+  hourly_rate: number
+  avatar: string
+  is_verified?: boolean
+  country?: string
+  city?: string
+  languages?: string[]
+}
+
 export default function InfluencersPage() {
   const { theme } = useTheme()
   const [search, setSearch] = useState("")
-  const [selectedInfluencer, setSelectedInfluencer] = useState<typeof influencers[0] | null>(null)
+  const [selectedInfluencer, setSelectedInfluencer] = useState<any | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [currentPage, setCurrentPage] = useState(1)
-  const cardsPerPage = 3
   const [loading, setLoading] = useState(true)
   const [showCollab, setShowCollab] = useState(false)
   const [collabInfluencer, setCollabInfluencer] = useState<any>(null)
@@ -280,38 +297,137 @@ export default function InfluencersPage() {
   const [reviewInput, setReviewInput] = useState<{user: string, rating: number, comment: string}>({user: '', rating: 5, comment: ''})
   const [sort, setSort] = useState('followers')
   const [filter, setFilter] = useState({ location: '', language: '', verified: '', minFollowers: '', maxFollowers: '' })
+  const [mentors, setMentors] = useState<Mentor[]>([])
+  const [isSignInOpen, setIsSignInOpen] = useState(false)
+  const [isSignUpOpen, setIsSignUpOpen] = useState(false)
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const cardsPerView = 3
 
+  // Fetch mentors from database
   useEffect(() => {
-    setTimeout(() => setLoading(false), 1200)
+    const fetchMentors = async () => {
+      try {
+        setLoading(true)
+        
+        // Try API first
+        try {
+          const response = await fetch('http://127.0.0.1:8000/api/v1/mentors/list/', {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            if (data.success && data.mentors) {
+              setMentors(data.mentors)
+              setLoading(false)
+              return
+            }
+          }
+        } catch (apiError) {
+          console.log("API fetch failed, trying Supabase directly:", apiError)
+        }
+
+        // Fallback to Supabase
+        const { data: mentorsData, error } = await supabase
+          .from('mentors')
+          .select('*')
+          .limit(50)
+
+        if (error) {
+          console.error("Error fetching mentors:", error)
+          setMentors([])
+        } else if (mentorsData) {
+          setMentors(mentorsData)
+        }
+      } catch (error) {
+        console.error("Error fetching mentors:", error)
+        setMentors([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchMentors()
   }, [])
 
+  // Map mentors to influencer-like format for compatibility
+  const mappedMentors = mentors.map(mentor => {
+    // Parse specialization
+    let specializations: string[] = []
+    if (Array.isArray(mentor.specialization)) {
+      specializations = mentor.specialization
+    } else if (typeof mentor.specialization === 'string') {
+      try {
+        specializations = JSON.parse(mentor.specialization || '[]')
+      } catch {
+        specializations = []
+      }
+    }
+
+    // Generate handle from name
+    const handle = `@${mentor.name.toLowerCase().replace(/\s+/g, '')}`
+
+    return {
+      id: mentor.id,
+      name: mentor.name,
+      handle: handle,
+      avatar: mentor.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(mentor.name)}&background=3B82F6&color=fff&size=128`,
+      description: mentor.description || mentor.title || "Experienced mentor ready to help you learn.",
+      categories: specializations.length > 0 ? specializations : [mentor.title || "General"],
+      verified: mentor.is_verified || false,
+      rating: mentor.rating || 4.0,
+      location: mentor.city && mentor.country ? `${mentor.city}, ${mentor.country}` : mentor.country || mentor.city || "",
+      languages: mentor.languages || [],
+      hourly_rate: mentor.hourly_rate || 0
+    }
+  })
+
   // Advanced filtering
-  let filteredInfluencers = influencers.filter(influencer => {
+  let filteredInfluencers = mappedMentors.filter(mentor => {
     const searchTerm = search.toLowerCase()
-    const followers = parseInt((influencer.followers || '').replace(/[^\d]/g, ''))
+    const specializations = Array.isArray(mentor.categories) ? mentor.categories : []
     return (
-      (influencer.name.toLowerCase().includes(searchTerm) ||
-      influencer.handle.toLowerCase().includes(searchTerm) ||
-      influencer.description.toLowerCase().includes(searchTerm) ||
-      influencer.categories.some(cat => cat.toLowerCase().includes(searchTerm)) ||
-      (influencer.topBrands?.some(brand => brand.toLowerCase().includes(searchTerm)) ?? false)) &&
-      (!filter.location || (influencer.location && influencer.location.toLowerCase().includes(filter.location.toLowerCase()))) &&
-      (!filter.language || (influencer.languages && influencer.languages.some(l => l.toLowerCase().includes(filter.language.toLowerCase())))) &&
-      (!filter.verified || (filter.verified === 'yes' ? influencer.verified : !influencer.verified)) &&
-      (!filter.minFollowers || followers >= parseInt(filter.minFollowers)) &&
-      (!filter.maxFollowers || followers <= parseInt(filter.maxFollowers))
+      (mentor.name.toLowerCase().includes(searchTerm) ||
+      mentor.handle.toLowerCase().includes(searchTerm) ||
+      mentor.description.toLowerCase().includes(searchTerm) ||
+      specializations.some(cat => cat.toLowerCase().includes(searchTerm))) &&
+      (!filter.location || (mentor.location && mentor.location.toLowerCase().includes(filter.location.toLowerCase()))) &&
+      (!filter.language || (mentor.languages && mentor.languages.some(l => l.toLowerCase().includes(filter.language.toLowerCase())))) &&
+      (!filter.verified || (filter.verified === 'yes' ? mentor.verified : !mentor.verified))
     )
   })
 
   // Sorting
   filteredInfluencers = filteredInfluencers.sort((a, b) => {
-    if (sort === 'followers') return parseInt((b.followers || '').replace(/[^\d]/g, '')) - parseInt((a.followers || '').replace(/[^\d]/g, ''))
-    if (sort === 'engagement') return parseFloat((b.engagement || '0').replace('%','')) - parseFloat((a.engagement || '0').replace('%',''))
+    if (sort === 'followers') return (b.rating || 0) - (a.rating || 0) // Sort by rating instead of followers
+    if (sort === 'engagement') return (b.rating || 0) - (a.rating || 0) // Sort by rating
     return 0
   })
 
-  const totalPages = Math.ceil(filteredInfluencers.length / cardsPerPage)
-  const paginatedInfluencers = filteredInfluencers.slice((currentPage - 1) * cardsPerPage, currentPage * cardsPerPage)
+  // Carousel navigation
+  const maxIndex = Math.max(0, filteredInfluencers.length - cardsPerView)
+  
+  const handlePrevious = () => {
+    setCurrentIndex((prev) => Math.max(0, prev - 1))
+  }
+
+  const handleNext = () => {
+    setCurrentIndex((prev) => Math.min(maxIndex, prev + 1))
+  }
+
+  const canGoPrevious = currentIndex > 0
+  const canGoNext = currentIndex < maxIndex
+
+  // Get visible mentors based on current index
+  const visibleMentors = filteredInfluencers.slice(currentIndex, currentIndex + cardsPerView)
+
+  // Reset to first card when filters change
+  useEffect(() => {
+    setCurrentIndex(0)
+  }, [search])
 
   const handleViewMore = (influencer: typeof influencers[0]) => {
     setSelectedInfluencer(influencer);
@@ -333,9 +449,9 @@ export default function InfluencersPage() {
   // Badge logic
   const getBadges = (inf: any) => {
     const badges = []
-    if (parseInt((inf.followers || '').replace(/[^\d]/g, '')) > 1000000) badges.push({ label: 'Top Influencer', color: 'bg-yellow-400 text-yellow-900 animate-bounce' })
+    if (inf.rating >= 4.5) badges.push({ label: 'Top Mentor', color: 'bg-yellow-400 text-yellow-900 animate-bounce' })
     if (inf.verified) badges.push({ label: 'Verified', color: 'bg-blue-500 text-white animate-pulse' })
-    if (parseFloat((inf.engagement || '0').replace('%','')) > 10) badges.push({ label: 'Trending', color: 'bg-pink-500 text-white animate-pulse' })
+    if (inf.rating >= 4.0 && inf.rating < 4.5) badges.push({ label: 'Trending', color: 'bg-pink-500 text-white animate-pulse' })
     return badges
   }
   
@@ -364,7 +480,7 @@ export default function InfluencersPage() {
             <p className="text-xl text-gray-300 mb-8">
               Connect with verified mentors who can help you achieve your goals
             </p>
-            <div className="max-w-2xl mx-auto mb-4">
+            <div className="max-w-2xl mx-auto mb-8">
               <Input
                 type="search"
                 placeholder="Search mentors by name, category, or subject..."
@@ -373,37 +489,58 @@ export default function InfluencersPage() {
                 className="w-full"
               />
             </div>
-            {/* Advanced Filters */}
-            <div className="flex flex-wrap gap-2 justify-center mb-8">
-              <input className="border rounded p-1 text-xs" placeholder="Location" value={filter.location} onChange={e => setFilter(f => ({ ...f, location: e.target.value }))} />
-              <input className="border rounded p-1 text-xs" placeholder="Language" value={filter.language} onChange={e => setFilter(f => ({ ...f, language: e.target.value }))} />
-              <select className="border rounded p-1 text-xs" value={filter.verified} onChange={e => setFilter(f => ({ ...f, verified: e.target.value }))}>
-                <option value="">All</option>
-                <option value="yes">Verified</option>
-                <option value="no">Not Verified</option>
-              </select>
-              <input className="border rounded p-1 text-xs" placeholder="Min Students" type="number" value={filter.minFollowers} onChange={e => setFilter(f => ({ ...f, minFollowers: e.target.value }))} />
-              <input className="border rounded p-1 text-xs" placeholder="Max Students" type="number" value={filter.maxFollowers} onChange={e => setFilter(f => ({ ...f, maxFollowers: e.target.value }))} />
-              <select className="border rounded p-1 text-xs" value={sort} onChange={e => setSort(e.target.value)}>
-                <option value="followers">Sort by Students</option>
-                <option value="engagement">Sort by Rating</option>
-              </select>
-            </div>
           </div>
           
-          <div className="flex flex-wrap justify-center gap-8">
-            {loading
-              ? Array.from({ length: 3 }).map((_, i) => <InfluencerSkeleton key={i} />)
-              : paginatedInfluencers.map((influencer) => (
-              <div
-                key={influencer.handle}
-                  className={`w-80 h-[520px] rounded-2xl border shadow-xl p-6 flex flex-col items-center justify-between transition-all duration-300 group overflow-hidden ${theme === 'dark' ? 'bg-gray-900 text-gray-100 border-gray-700' : 'bg-white text-[#222] border-gray-200'}`}
-              >
+          {loading ? (
+            <div className="flex justify-center gap-8">
+              {Array.from({ length: 3 }).map((_, i) => <InfluencerSkeleton key={i} />)}
+            </div>
+          ) : filteredInfluencers.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-white text-lg">No mentors found matching your search.</p>
+            </div>
+          ) : (
+            <div className="relative flex items-center gap-4">
+              {/* Left Arrow */}
+              {canGoPrevious && (
+                <button
+                  onClick={handlePrevious}
+                  className="flex-shrink-0 bg-white rounded-full p-3 shadow-lg border border-gray-200 hover:bg-gray-50 transition-all hover:scale-110 z-10"
+                  aria-label="Previous mentors"
+                >
+                  <ChevronLeft className="w-6 h-6 text-gray-700" />
+                </button>
+              )}
+
+              <div className="flex-1 overflow-hidden relative">
+                <motion.div
+                  className="flex gap-8"
+                  animate={{
+                    x: `-${currentIndex * (100 / cardsPerView)}%`
+                  }}
+                  transition={{
+                    type: "spring",
+                    stiffness: 300,
+                    damping: 30,
+                    mass: 0.8
+                  }}
+                >
+                  {filteredInfluencers.map((influencer, index) => (
+                    <div
+                      key={influencer.id || influencer.handle}
+                      className="flex-shrink-0"
+                      style={{
+                        width: `calc((100% - ${(cardsPerView - 1) * 2}rem) / ${cardsPerView})`
+                      }}
+                    >
+                      <div
+                        className={`w-80 h-[420px] rounded-2xl border shadow-xl p-6 flex flex-col items-center justify-between transition-all duration-300 group overflow-hidden mx-auto ${theme === 'dark' ? 'bg-gray-900 text-gray-100 border-gray-700' : 'bg-white text-[#222] border-gray-200'}`}
+                      >
                   <div className="relative inline-block">
                   <img
                     src={influencer.avatar}
                     alt={influencer.name}
-                      className="w-24 h-24 rounded-full object-cover mb-4 shadow border-4 border-indigo-600"
+                      className="w-32 h-32 rounded-full object-cover mb-4 shadow-lg ring-4 ring-indigo-200 border-2 border-indigo-400"
                     />
                     <div className="absolute -bottom-2 right-0 flex gap-1">
                       {getBadges(influencer).map(b => <span key={b.label} className={`px-2 py-1 rounded-full text-xs font-bold ${b.color}`}>{b.label}</span>)}
@@ -424,24 +561,24 @@ export default function InfluencersPage() {
 
                   <div className={`mb-2 text-center ${theme === 'dark' ? 'text-gray-200' : 'text-gray-700'}`}>{influencer.description}</div>
 
-                  <div className="flex justify-center gap-6 mb-2">
-                    <div className="text-center">
-                      <div className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>Followers</div>
-                      <div className={`font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{influencer.followers}</div>
-                </div>
-                    <div className="text-center">
-                      <div className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>Engagement</div>
-                      <div className={`font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{influencer.engagement}</div>
-                </div>
+                  {/* Rating */}
+                  <div className="flex justify-center items-center gap-2 mb-2">
+                    <div className="flex items-center gap-1">
+                      {[...Array(5)].map((_, i) => (
+                        <Star
+                          key={i}
+                          size={16}
+                          className={i < Math.floor(influencer.rating || 0) ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}
+                        />
+                      ))}
+                    </div>
+                    <span className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                      {influencer.rating?.toFixed(1) || '4.0'}
+                    </span>
                   </div>
 
-                  {/* Mini Analytics/Chart */}
-                  <div className="w-full mb-2">
-                    <Sparklines data={[10, 20, 15, 30, 25, 40, 35]} height={30}><SparklinesLine color="#06b6d4" /></Sparklines>
-                </div>
-
                   <div className="flex flex-wrap gap-2 justify-center mb-2">
-                  {influencer.categories.slice(0, 3).map((category) => (
+                  {(influencer.categories || []).slice(0, 3).map((category) => (
                     <Badge
                       key={category}
                         className={`rounded-full px-3 py-1 text-xs font-semibold ${theme === 'dark' ? 'bg-indigo-900 text-indigo-200' : 'bg-indigo-100 text-indigo-700'}`}
@@ -451,54 +588,30 @@ export default function InfluencersPage() {
                   ))}
                 </div>
 
-                  <div className="flex justify-center gap-2 mb-4">
-                  {influencer.platforms.slice(0, 3).map((platform) => {
-                    const Icon = {
-                      'YouTube': Youtube,
-                      'Instagram': Instagram,
-                      'Twitter': Twitter,
-                      'Twitch': Twitch,
-                      'TikTok': TrendingUp,
-                      'Discord': Users,
-                      'Pinterest': Globe
-                    }[platform] || Globe
-                    return (
-                      <div
-                        key={platform}
-                          className={`p-2 rounded-full ${theme === 'dark' ? 'bg-gray-800' : 'bg-gray-100'}`}
-                        >
-                          <Icon size={16} className={theme === 'dark' ? 'text-gray-300' : 'text-gray-700'} />
-                      </div>
-                    )
-                  })}
-                </div>
+                        {/* Platforms section removed - not applicable for mentors */}
 
-                  <button
-                  onClick={() => handleViewMore(influencer)}
-                    className={`w-full py-2 rounded-lg font-semibold transition-colors ${theme === 'dark' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-indigo-500 hover:bg-indigo-600 text-white'}`}
-                >
-                    View Details
-                  </button>
+                        <button
+                          onClick={() => setIsSignInOpen(true)}
+                          className={`w-full py-2 rounded-lg font-semibold transition-colors ${theme === 'dark' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-indigo-500 hover:bg-indigo-600 text-white'}`}
+                        >
+                          Book Tutor
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </motion.div>
               </div>
-            ))}
-          </div>
-            {totalPages > 1 && (
-             <div className="flex justify-center items-center gap-2 mt-12">
-              <button
-                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                disabled={currentPage === 1}
-                className="px-3 py-1 rounded bg-cyan-400 text-white disabled:opacity-50 hover:bg-cyan-500 transition"
-              >
-                Prev
-              </button>
-              <span className="text-black font-semibold dark:text-white">Page {currentPage} of {totalPages}</span>
-              <button
-                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                disabled={currentPage === totalPages}
-                className="px-3 py-1 rounded bg-cyan-400 text-white disabled:opacity-50 hover:bg-cyan-500 transition"
-              >
-                Next
-              </button>
+
+              {/* Right Arrow */}
+              {canGoNext && (
+                <button
+                  onClick={handleNext}
+                  className="flex-shrink-0 bg-white rounded-full p-3 shadow-lg border border-gray-200 hover:bg-gray-50 transition-all hover:scale-110 z-10"
+                  aria-label="Next mentors"
+                >
+                  <ChevronRight className="w-6 h-6 text-gray-700" />
+                </button>
+              )}
             </div>
           )}
           {/* Comparison Modal */}
@@ -510,6 +623,22 @@ export default function InfluencersPage() {
       <div className="relative z-10">
         <Footer />
       </div>
+
+      {/* Sign In Modal */}
+      <SignInModal
+        isOpen={isSignInOpen}
+        onClose={() => setIsSignInOpen(false)}
+        onSignUp={() => {
+          setIsSignInOpen(false)
+          setIsSignUpOpen(true)
+        }}
+      />
+
+      {/* Sign Up Modal */}
+      <SignUpModal
+        isOpen={isSignUpOpen}
+        onClose={() => setIsSignUpOpen(false)}
+      />
 
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
         <DialogContent className={`w-full max-w-md md:max-w-lg lg:max-w-xl max-h-[80vh] overflow-y-auto border-gray-700 p-2 md:p-6 ${theme === 'dark' ? 'bg-gray-900 text-gray-100' : 'bg-white text-[#222]'}`}>

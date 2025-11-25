@@ -6,13 +6,14 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { MapPin, Video, Users, Star, Heart, MessageSquare, Calendar, Clock, Globe, CheckCircle, Filter, X } from "lucide-react"
+import { MapPin, Video, Users, Star, Heart, MessageSquare, Calendar, Clock, Globe, CheckCircle, Filter, X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
 import { Navbar } from "@/components/navbar"
 import { Footer } from "@/components/footer"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PageContainer } from "@/components/page-container"
 import { AnimatePresence, motion } from "framer-motion"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { supabase } from "@/lib/supabase"
 
 // Tutor/Mentor interface
 interface Tutor {
@@ -41,159 +42,8 @@ interface Tutor {
   languages: string[]
 }
 
-// Sample tutor data
-const tutors: Tutor[] = [
-  {
-    id: 1,
-    name: "Sarah Johnson",
-    avatar: "https://randomuser.me/api/portraits/women/44.jpg",
-      verified: true,
-    rating: 4.9,
-    reviews: 87,
-    subjects: ["Mathematics", "Physics", "Calculus"],
-    location: {
-      city: "Cape Town",
-      country: "South Africa",
-      coordinates: { lat: -33.9249, lng: 18.4241 }
-    },
-    distance: 2.5,
-    sessionTypes: ["contact", "online"],
-    price: {
-      contact: 350,
-      online: 250,
-      currency: "R"
-    },
-    availability: "Available now",
-    description: "Expert mathematics tutor with 10+ years of experience. Specialized in advanced calculus and physics.",
-    experience: "10+ years",
-    languages: ["English", "Afrikaans"]
-  },
-  {
-    id: 2,
-    name: "Michael Chen",
-    avatar: "https://randomuser.me/api/portraits/men/32.jpg",
-      verified: true,
-    rating: 4.8,
-    reviews: 65,
-    subjects: ["Programming", "Web Development", "Data Science"],
-    location: {
-      city: "Johannesburg",
-      country: "South Africa",
-      coordinates: { lat: -26.2041, lng: 28.0473 }
-    },
-    distance: 5.2,
-    sessionTypes: ["online"],
-    price: {
-      contact: 0,
-      online: 300,
-      currency: "R"
-    },
-    availability: "Available in 2 hours",
-    description: "Professional software developer and coding instructor. Expert in Python, JavaScript, and machine learning.",
-    experience: "8+ years",
-    languages: ["English", "Mandarin"]
-  },
-  {
-    id: 3,
-    name: "Emma Wilson",
-    avatar: "https://randomuser.me/api/portraits/women/68.jpg",
-      verified: true,
-    rating: 4.7,
-    reviews: 92,
-    subjects: ["English", "Literature", "Writing"],
-    location: {
-      city: "Durban",
-      country: "South Africa",
-      coordinates: { lat: -29.8587, lng: 31.0218 }
-    },
-    distance: 8.1,
-    sessionTypes: ["contact", "online"],
-    price: {
-      contact: 280,
-      online: 200,
-      currency: "R"
-    },
-    availability: "Available now",
-    description: "Experienced English tutor specializing in literature analysis and creative writing. Helps students excel in exams.",
-    experience: "12+ years",
-    languages: ["English"]
-  },
-  {
-    id: 4,
-    name: "David Kim",
-    avatar: "https://randomuser.me/api/portraits/men/85.jpg",
-      verified: true,
-    rating: 4.9,
-    reviews: 156,
-    subjects: ["Chemistry", "Biology", "Medicine"],
-    location: {
-      city: "Pretoria",
-      country: "South Africa",
-      coordinates: { lat: -25.7479, lng: 28.2293 }
-    },
-    distance: 12.3,
-    sessionTypes: ["contact"],
-    price: {
-      contact: 400,
-      online: 0,
-      currency: "R"
-    },
-    availability: "Available tomorrow",
-    description: "Medical professional and science tutor. Expert in chemistry and biology with focus on exam preparation.",
-    experience: "15+ years",
-    languages: ["English", "Zulu"]
-  },
-  {
-    id: 5,
-    name: "Lisa Anderson",
-    avatar: "https://randomuser.me/api/portraits/women/25.jpg",
-      verified: true,
-    rating: 4.8,
-    reviews: 78,
-    subjects: ["Business", "Economics", "Finance"],
-    location: {
-      city: "Cape Town",
-      country: "South Africa",
-      coordinates: { lat: -33.9249, lng: 18.4241 }
-    },
-    distance: 1.8,
-    sessionTypes: ["contact", "online"],
-    price: {
-      contact: 320,
-      online: 220,
-      currency: "R"
-    },
-    availability: "Available now",
-    description: "Business consultant and economics tutor. Helps students understand complex business concepts and excel in exams.",
-    experience: "9+ years",
-    languages: ["English"]
-  },
-  {
-    id: 6,
-    name: "James Brown",
-    avatar: "https://randomuser.me/api/portraits/men/41.jpg",
-    verified: true,
-    rating: 4.6,
-    reviews: 45,
-    subjects: ["Music", "Piano", "Music Theory"],
-    location: {
-      city: "Port Elizabeth",
-      country: "South Africa",
-      coordinates: { lat: -33.9608, lng: 25.6022 }
-    },
-    distance: 25.5,
-    sessionTypes: ["contact", "online"],
-    price: {
-      contact: 380,
-      online: 280,
-      currency: "R"
-    },
-    availability: "Available in 3 hours",
-    description: "Professional musician and music teacher. Specialized in piano and music theory for all levels.",
-    experience: "7+ years",
-    languages: ["English", "Xhosa"]
-  }
-]
+// Sample tutor data (fallback)
+const tutorsFallback: Tutor[] = []
 
 export default function FindTutorsPage() {
   const [search, setSearch] = useState("")
@@ -203,8 +53,119 @@ export default function FindTutorsPage() {
   const [selectedTutor, setSelectedTutor] = useState<Tutor | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
-  const [currentPage, setCurrentPage] = useState(1)
-  const cardsPerPage = 3
+  const [tutors, setTutors] = useState<Tutor[]>([])
+  const [loading, setLoading] = useState(true)
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const cardsPerView = 3
+
+  // Fetch mentors from database
+  useEffect(() => {
+    const fetchMentors = async () => {
+      try {
+        setLoading(true)
+        
+        // Try Django API first
+        try {
+          const response = await fetch('http://127.0.0.1:8000/api/v1/mentors/')
+          if (response.ok) {
+            const data = await response.json()
+            if (data && data.length > 0) {
+              const mappedTutors = data.map((mentor: any) => mapMentorToTutor(mentor))
+              setTutors(mappedTutors)
+              setLoading(false)
+              return
+            }
+          }
+        } catch (apiError) {
+          console.log("API fetch failed, trying Supabase directly:", apiError)
+        }
+
+        // Fallback to Supabase
+        const { data: mentorsData, error } = await supabase
+          .from('mentors')
+          .select('*')
+          .order('created_at', { ascending: false })
+
+        if (error) {
+          console.error("Error fetching mentors:", error)
+          setTutors([])
+        } else if (mentorsData && mentorsData.length > 0) {
+          const mappedTutors = mentorsData.map((mentor: any) => mapMentorToTutor(mentor))
+          setTutors(mappedTutors)
+        } else {
+          setTutors([])
+        }
+      } catch (error) {
+        console.error("Error fetching mentors:", error)
+        setTutors([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchMentors()
+  }, [])
+
+  // Map mentor data to Tutor interface
+  const mapMentorToTutor = (mentor: any): Tutor => {
+    // Parse specialization
+    let specializations: string[] = []
+    if (Array.isArray(mentor.specialization)) {
+      specializations = mentor.specialization
+    } else if (typeof mentor.specialization === 'string') {
+      try {
+        specializations = JSON.parse(mentor.specialization || '[]')
+      } catch {
+        specializations = []
+      }
+    }
+
+    // Parse languages
+    let languages: string[] = []
+    if (Array.isArray(mentor.languages)) {
+      languages = mentor.languages
+    } else if (typeof mentor.languages === 'string') {
+      try {
+        languages = JSON.parse(mentor.languages || '[]')
+      } catch {
+        languages = []
+      }
+    }
+
+    // Determine session types (assume both if available)
+    const sessionTypes: ("contact" | "online")[] = ["contact", "online"]
+
+    // Get hourly rate
+    const hourlyRate = parseFloat(mentor.hourly_rate) || 0
+
+    return {
+      id: parseInt(mentor.id) || 0,
+      name: mentor.name || 'Unknown Mentor',
+      avatar: mentor.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(mentor.name || 'Mentor')}&background=3B82F6&color=fff&size=128`,
+      verified: mentor.is_verified || false,
+      rating: parseFloat(mentor.rating) || 0,
+      reviews: mentor.total_reviews || 0,
+      subjects: specializations.length > 0 ? specializations : ['General'],
+      location: {
+        city: mentor.country || 'Unknown',
+        country: mentor.country || 'South Africa',
+        coordinates: {
+          lat: parseFloat(mentor.latitude) || -33.9249,
+          lng: parseFloat(mentor.longitude) || 18.4241
+        }
+      },
+      sessionTypes,
+      price: {
+        contact: hourlyRate,
+        online: hourlyRate * 0.8, // Online is 80% of contact price
+        currency: "R"
+      },
+      availability: mentor.availability || 'Available now',
+      description: mentor.description || 'Experienced mentor ready to help you learn.',
+      experience: `${mentor.experience || 0}+ years`,
+      languages: languages.length > 0 ? languages : ['English']
+    }
+  }
 
   // Get user location (simulated - in real app, use geolocation API)
   useEffect(() => {
@@ -253,8 +214,27 @@ export default function FindTutorsPage() {
       return 0
     })
 
-  const totalPages = Math.ceil(filteredTutors.length / cardsPerPage)
-  const paginatedTutors = filteredTutors.slice((currentPage - 1) * cardsPerPage, currentPage * cardsPerPage)
+  // Carousel navigation
+  const maxIndex = Math.max(0, filteredTutors.length - cardsPerView)
+  
+  const handlePrevious = () => {
+    setCurrentIndex((prev) => Math.max(0, prev - 1))
+  }
+
+  const handleNext = () => {
+    setCurrentIndex((prev) => Math.min(maxIndex, prev + 1))
+  }
+
+  const canGoPrevious = currentIndex > 0
+  const canGoNext = currentIndex < maxIndex
+
+  // Reset to first card when search/filters change
+  useEffect(() => {
+    setCurrentIndex(0)
+  }, [search, sessionType, sortBy])
+
+  // Get visible tutors based on current index
+  const visibleTutors = filteredTutors.slice(currentIndex, currentIndex + cardsPerView)
 
   const handleViewDetails = (tutor: Tutor) => {
     setSelectedTutor(tutor)
@@ -350,40 +330,81 @@ export default function FindTutorsPage() {
             </div>
           </div>
 
-          {/* Tutors Grid */}
-          <div className="flex flex-wrap justify-center gap-8">
-            {paginatedTutors.length === 0 ? (
-              <div className="text-center text-white py-20">
-                <p className="text-2xl font-bold">No tutors found. Try a different search!</p>
-              </div>
-                ) : (
-              paginatedTutors.map((tutor) => (
-                  <motion.div
-                  key={tutor.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5 }}
-                  className="w-80 bg-white rounded-2xl border-2 border-blue-200 shadow-xl p-6 flex flex-col"
+          {/* Tutors Carousel */}
+          {loading ? (
+            <div className="flex justify-center items-center py-20">
+              <Loader2 className="w-8 h-8 animate-spin text-white" />
+            </div>
+          ) : filteredTutors.length === 0 ? (
+            <div className="text-center text-white py-20">
+              <p className="text-2xl font-bold">No tutors found. Try a different search!</p>
+            </div>
+          ) : (
+            <div className="relative flex items-center gap-4 max-w-7xl mx-auto">
+              {/* Left Arrow */}
+              {canGoPrevious && (
+                <button
+                  onClick={handlePrevious}
+                  className="flex-shrink-0 bg-white rounded-full p-3 shadow-lg border border-gray-200 hover:bg-gray-50 transition-all hover:scale-110 z-10"
+                  aria-label="Previous tutors"
                 >
+                  <ChevronLeft className="w-6 h-6 text-gray-700" />
+                </button>
+              )}
+
+              <div className="flex-1 overflow-hidden relative">
+                <motion.div
+                  className="flex gap-8"
+                  animate={{
+                    x: `-${currentIndex * (100 / cardsPerView)}%`
+                  }}
+                  transition={{
+                    type: "spring",
+                    stiffness: 300,
+                    damping: 30,
+                    mass: 0.8
+                  }}
+                >
+                  {filteredTutors.map((tutor) => (
+                    <div
+                      key={tutor.id}
+                      className="flex-shrink-0"
+                      style={{
+                        width: `calc((100% - ${(cardsPerView - 1) * 2}rem) / ${cardsPerView})`
+                      }}
+                    >
+                      <motion.div
+                        key={tutor.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5 }}
+                        className="w-full bg-white rounded-2xl border-2 border-blue-200 shadow-xl p-6 flex flex-col"
+                      >
                   {/* Header */}
-                  <div className="flex items-center gap-3 mb-4">
-                    <Avatar className="h-14 w-14">
-                      <AvatarImage src={tutor.avatar} alt={tutor.name} />
-                      <AvatarFallback>{tutor.name.charAt(0)}</AvatarFallback>
+                  <div className="flex items-center gap-4 mb-4">
+                    <Avatar className="h-20 w-20 rounded-full border-2 border-blue-300 shadow-md ring-2 ring-blue-100 overflow-hidden flex-shrink-0">
+                      <AvatarImage 
+                        src={tutor.avatar} 
+                        alt={tutor.name}
+                        className="object-cover w-full h-full rounded-full"
+                      />
+                      <AvatarFallback className="bg-gradient-to-br from-blue-100 to-blue-200 text-blue-700 font-semibold text-lg rounded-full flex items-center justify-center">
+                        {tutor.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
                     </Avatar>
                     <div className="flex-1">
-                            <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2">
                         <span className="font-semibold text-gray-900">{tutor.name}</span>
                         {tutor.verified && (
-                          <CheckCircle className="h-4 w-4 text-blue-600" />
-                              )}
-                            </div>
-                      <div className="flex items-center gap-1 mt-1">
-                        <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                        <span className="text-xs text-gray-600">{tutor.rating} ({tutor.reviews} reviews)</span>
+                          <CheckCircle className="h-5 w-5 text-blue-600" />
+                        )}
                       </div>
-                          </div>
-                        </div>
+                      <div className="flex items-center gap-1 mt-1">
+                        <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-400" />
+                        <span className="text-xs text-gray-600">{tutor.rating.toFixed(1)} ({tutor.reviews} reviews)</span>
+                      </div>
+                    </div>
+                  </div>
 
                   {/* Location & Distance */}
                   <div className="flex items-center gap-2 mb-3 text-sm text-gray-700">
@@ -463,32 +484,25 @@ export default function FindTutorsPage() {
                     >
                       View Details
                     </Button>
-                      </div>
-                  </motion.div>
-              ))
-            )}
-                  </div>
-
-          {/* Pagination */}
-            {totalPages > 1 && (
-            <div className="flex justify-center items-center gap-2 mt-12">
-                <button
-                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                  disabled={currentPage === 1}
-                className="px-4 py-2 rounded bg-blue-600 text-white disabled:opacity-50 hover:bg-blue-700 transition font-medium"
-                >
-                  Prev
-                </button>
-              <span className="text-white font-semibold px-4">Page {currentPage} of {totalPages}</span>
-                <button
-                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                  disabled={currentPage === totalPages}
-                className="px-4 py-2 rounded bg-blue-600 text-white disabled:opacity-50 hover:bg-blue-700 transition font-medium"
-                >
-                  Next
-                </button>
+                        </div>
+                      </motion.div>
+                    </div>
+                  ))}
+                </motion.div>
               </div>
-            )}
+
+              {/* Right Arrow */}
+              {canGoNext && (
+                <button
+                  onClick={handleNext}
+                  className="flex-shrink-0 bg-white rounded-full p-3 shadow-lg border border-gray-200 hover:bg-gray-50 transition-all hover:scale-110 z-10"
+                  aria-label="Next tutors"
+                >
+                  <ChevronRight className="w-6 h-6 text-gray-700" />
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </main>
 

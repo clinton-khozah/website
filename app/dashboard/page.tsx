@@ -1130,29 +1130,29 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-gray-600">Account Balance</span>
                       <DollarSign className="h-4 w-4 text-green-600" />
-                    </div>
+                  </div>
                     <p className="text-2xl font-bold text-gray-900">
                       ${adAccount?.balance ? parseFloat(adAccount.balance).toFixed(2) : '0.00'}
                     </p>
-                    <Button 
+                <Button 
                       size="sm" 
                       className="w-full mt-3 bg-gradient-to-r from-blue-500 to-green-500 hover:from-blue-600 hover:to-green-600 text-white"
-                      asChild
-                    >
+                  asChild
+                >
                       <Link href="/dashboard/advertising">
                         Add Funds
-                      </Link>
-                    </Button>
-                  </div>
+                    </Link>
+                  </Button>
+            </div>
                   <div className="border border-gray-200 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-gray-600">Lifetime Spent</span>
                       <TrendingUp className="h-4 w-4 text-blue-600" />
-                    </div>
+                        </div>
                     <p className="text-2xl font-bold text-gray-900">
                       ${adAccount?.lifetime_spent ? parseFloat(adAccount.lifetime_spent).toFixed(2) : '0.00'}
                     </p>
-                  </div>
+                      </div>
                   <div className="border border-gray-200 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-gray-600">Cost Per Click</span>
@@ -1161,8 +1161,8 @@ export default function DashboardPage() {
                     <p className="text-2xl font-bold text-gray-900">
                       ${adAccount?.cost_per_click ? parseFloat(adAccount.cost_per_click).toFixed(2) : '0.50'}
                     </p>
-                  </div>
-                </div>
+                        </div>
+                      </div>
 
                 {/* How It Works */}
                 <div className="border-t border-gray-200 pt-4">
@@ -1171,16 +1171,16 @@ export default function DashboardPage() {
                     <div className="flex gap-4">
                       <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
                         1
-                      </div>
+                    </div>
                       <div>
                         <h5 className="font-medium text-gray-900 mb-1">Add Funds</h5>
                         <p className="text-sm text-gray-600">Deposit money into your advertising account. Minimum deposit is $5.00.</p>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
             </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <Card className="bg-white border rounded-xl shadow-sm">
@@ -1225,7 +1225,7 @@ export default function DashboardPage() {
                     }
 
                     return (
-                      <div className="space-y-4">
+                  <div className="space-y-4">
                         {recentRequests.map((session) => {
                           const sessionDate = new Date(`${session.date}T${session.time}`)
                           const hoursAgo = Math.floor((now.getTime() - sessionDate.getTime()) / (1000 * 60 * 60))
@@ -1242,8 +1242,8 @@ export default function DashboardPage() {
                               <div className="flex-shrink-0">
                                 <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold">
                                   {session.topic.charAt(0).toUpperCase()}
-                                </div>
-                              </div>
+                        </div>
+                      </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium text-gray-900 truncate">{session.topic}</p>
                                 <p className="text-xs text-gray-600">
@@ -1252,7 +1252,7 @@ export default function DashboardPage() {
                                 <p className="text-xs text-gray-500 mt-1">
                                   {convertedAmounts[session.id] || `$${parseFloat(session.amount || 0).toFixed(2)}`} • {session.duration} min
                                 </p>
-                              </div>
+                    </div>
                               <Button 
                                 size="sm" 
                                 className="bg-gradient-to-r from-blue-500 to-green-500 hover:from-blue-600 hover:to-green-600 text-white"
@@ -1263,7 +1263,7 @@ export default function DashboardPage() {
                               >
                                 Accept Session
                               </Button>
-                            </div>
+                        </div>
                           )
                         })}
                       </div>
@@ -1309,7 +1309,7 @@ export default function DashboardPage() {
                 <CardContent>
                   <div className="text-2xl font-bold text-gray-900">
                     {campaigns.reduce((sum: number, c: any) => sum + (c.total_impressions || 0), 0)}
-                  </div>
+            </div>
                   <p className="text-xs text-gray-600 mt-1">
                     {adImpressions.length} detailed records
                   </p>
@@ -1319,15 +1319,15 @@ export default function DashboardPage() {
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium text-gray-600">Click-Through Rate</CardTitle>
                   <TrendingUp className="h-4 w-4 text-green-600" />
-                </CardHeader>
-                <CardContent>
+              </CardHeader>
+              <CardContent>
                   <div className="text-2xl font-bold text-gray-900">
                     {(() => {
                       const totalClicks = campaigns.reduce((sum: number, c: any) => sum + (c.total_clicks || 0), 0)
                       const totalImpressions = campaigns.reduce((sum: number, c: any) => sum + (c.total_impressions || 0), 0)
                       return totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00'
                     })()}%
-                  </div>
+                            </div>
                   <p className="text-xs text-gray-600 mt-1">
                     Clicks per 100 impressions
                   </p>
@@ -1351,7 +1351,7 @@ export default function DashboardPage() {
                   </p>
                 </CardContent>
               </Card>
-            </div>
+                              </div>
 
             {/* Conversion Metrics */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1366,7 +1366,7 @@ export default function DashboardPage() {
                       const paidSessions = sessions.filter(s => s.is_paid).length
                       return totalSessions > 0 ? ((paidSessions / totalSessions) * 100).toFixed(1) : '0.0'
                     })()}%
-                  </div>
+                            </div>
                   <p className="text-xs text-gray-600 mt-2">
                     {sessions.filter(s => s.is_paid).length} of {sessions.length} sessions paid
                   </p>
@@ -1383,7 +1383,7 @@ export default function DashboardPage() {
                       const totalRevenue = sessions.filter(s => s.is_paid).reduce((sum, s) => sum + parseFloat(s.amount || 0), 0)
                       return totalClicks > 0 ? `$${(totalRevenue / totalClicks).toFixed(2)}` : '$0.00'
                     })()}
-                  </div>
+                            </div>
                   <p className="text-xs text-gray-600 mt-2">
                     Average revenue generated per click
                   </p>
@@ -1400,13 +1400,13 @@ export default function DashboardPage() {
                       const paidSessions = sessions.filter(s => s.is_paid).length
                       return paidSessions > 0 ? `$${(totalSpent / paidSessions).toFixed(2)}` : '$0.00'
                     })()}
-                  </div>
+                        </div>
                   <p className="text-xs text-gray-600 mt-2">
                     Ad spend per paid session
                   </p>
                 </CardContent>
               </Card>
-            </div>
+                  </div>
 
             {/* Geographic Analytics */}
             <Card className="bg-white border rounded-xl shadow-sm">
@@ -1418,10 +1418,10 @@ export default function DashboardPage() {
                 {analyticsLoading ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-                  </div>
+                      </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
+                          <div>
                       <h4 className="text-sm font-semibold text-gray-700 mb-3">Top Countries (Clicks)</h4>
                       <div className="space-y-2">
                         {(() => {
@@ -1439,7 +1439,7 @@ export default function DashboardPage() {
                               <div key={country} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
                                 <span className="text-sm text-gray-700">{country}</span>
                                 <span className="text-sm font-semibold text-gray-900">{count}</span>
-                              </div>
+                          </div>
                             ))
                           ) : (
                             <p className="text-sm text-gray-500">No geographic data available</p>
@@ -1447,7 +1447,7 @@ export default function DashboardPage() {
                         })()}
                       </div>
                     </div>
-                    <div>
+                            <div>
                       <h4 className="text-sm font-semibold text-gray-700 mb-3">Top Countries (Impressions)</h4>
                       <div className="space-y-2">
                         {(() => {
@@ -1519,8 +1519,8 @@ export default function DashboardPage() {
                                 <div className="flex items-center gap-3 mb-2">
                                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold">
                                     {student.name.charAt(0).toUpperCase()}
-                                  </div>
-                                  <div>
+                            </div>
+                            <div>
                                     <h4 className="font-semibold text-gray-900">{student.name}</h4>
                                     <p className="text-sm text-gray-600">{student.email}</p>
                                   </div>
@@ -1533,23 +1533,23 @@ export default function DashboardPage() {
                                     {student.sessions.map((s: any, idx: number) => (
                                       <div key={idx} className="text-xs text-gray-600">
                                         • {s.topic} - ${parseFloat(s.amount || 0).toFixed(2)} ({new Date(s.date).toLocaleDateString()})
-                                      </div>
+                            </div>
                                     ))}
-                                  </div>
-                                </div>
-                              </div>
+                          </div>
+                        </div>
+                      </div>
                               <Badge className="bg-green-100 text-green-700 border-green-200">
                                 Paid
                               </Badge>
-                            </div>
-                          </div>
+                    </div>
+                  </div>
                         ))
                       ) : (
                         <div className="text-center py-12">
                           <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                           <p className="text-gray-600">No paid students yet</p>
                           <p className="text-sm text-gray-500 mt-1">Students who pay for sessions will appear here</p>
-                        </div>
+                </div>
                       )
                     })()}
                   </div>
@@ -1606,7 +1606,7 @@ export default function DashboardPage() {
                     <p className="text-gray-600">No sessions scheduled yet</p>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                <div className="space-y-4">
                     {sessions.map((session) => {
                       const sessionDate = new Date(`${session.date}T${session.time}`)
                       const isPast = sessionDate < new Date()
@@ -1658,7 +1658,7 @@ export default function DashboardPage() {
                             </div>
 
                             {/* Content Section */}
-                            <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0">
                               <div className="flex items-start justify-between mb-3">
                                 <div className="flex-1">
                                   <h3 className="text-xl font-bold text-gray-900 mb-1">{session.topic}</h3>
@@ -1676,9 +1676,9 @@ export default function DashboardPage() {
                                         Awaiting Payment
                                       </span>
                                 )}
-                              </div>
-                            </div>
-                              </div>
+                    </div>
+                  </div>
+                    </div>
 
                               {/* Student Info */}
                               {session.is_paid && session.learner_name && session.learner_name !== 'TBD' ? (
@@ -1688,13 +1688,13 @@ export default function DashboardPage() {
                                     <div className="flex items-center gap-2">
                                       <User className="h-4 w-4 text-blue-600" />
                                       <span className="text-sm font-medium text-gray-900">{session.learner_name}</span>
-                                    </div>
+                  </div>
                                     <div className="flex items-center gap-2">
                                       <Mail className="h-4 w-4 text-blue-600" />
                                       <span className="text-sm text-gray-700">{session.learner_email}</span>
-                                    </div>
-                                  </div>
-                                </div>
+                    </div>
+                  </div>
+                </div>
                               ) : (
                                 <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                                   <p className="text-xs font-semibold text-gray-600 mb-1">No student assigned yet</p>
@@ -1759,7 +1759,7 @@ export default function DashboardPage() {
                                       <p className="text-xs font-semibold text-gray-700 mb-1">Meeting Link</p>
                                       <p className="text-sm text-gray-600 truncate">{session.meeting_link}</p>
                             </div>
-                                    <Button
+                <Button 
                                       variant="ghost"
                                       size="sm"
                                       onClick={() => {
@@ -1768,9 +1768,9 @@ export default function DashboardPage() {
                                       className="ml-2 flex-shrink-0"
                                     >
                                       <Copy className="h-4 w-4" />
-                                    </Button>
-                            </div>
-                          </div>
+                </Button>
+          </div>
+              </div>
                               )}
 
                               {/* Join Meeting Button - Only accessible when meeting starts and session is paid AND student is assigned */}
@@ -1796,17 +1796,17 @@ export default function DashboardPage() {
                                     <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-500 rounded-lg font-medium text-sm">
                                       <Clock className="h-4 w-4" />
                                       Meeting starts {new Date(sessionDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at {new Date(`2000-01-01T${session.time}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
-                        </div>
+                    </div>
                                   ) : (
                                     <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-500 rounded-lg font-medium text-sm">
                                       <Clock className="h-4 w-4" />
                                       Meeting has ended
-                      </div>
+                  </div>
                                   )}
                     </div>
                               )}
                   </div>
-                </div>
+                    </div>
                         </motion.div>
                       )
                     })}
@@ -1942,7 +1942,7 @@ export default function DashboardPage() {
                             >
                               <Star className="h-4 w-4 mr-2" />
                               Grade Task
-                            </Button>
+                      </Button>
                           )}
                           {task.status === 'graded' && (
                             <Button
@@ -1968,7 +1968,7 @@ export default function DashboardPage() {
               )}
               </CardContent>
             </Card>
-        </TabsContent>
+          </TabsContent>
         </Tabs>
 
       {/* Debug: Test button to manually open modal */}
@@ -1985,7 +1985,7 @@ export default function DashboardPage() {
           >
             Test Modal (Debug)
           </button>
-        </div>
+    </div>
       )}
 
       {/* Mentor Profile Completion Form */}
